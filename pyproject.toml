@@ -2,7 +2,7 @@
 name = "t1_nmpc"
 version = "0.0.1"
 description = "wb_humanoid-faithful whole-body nonlinear MPC (NMPC) for Booster T1 (acados + pinocchio.casadi)"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.10"
 # Env is conda-managed (`t1mpc`): install with `pip install -e . --no-deps`.
 # The runtime deps below come from conda-forge (pinocchio, casadi, numpy, scipy,
 # mujoco) + pip (acados_template, adam-robotics). Listed for documentation only.
