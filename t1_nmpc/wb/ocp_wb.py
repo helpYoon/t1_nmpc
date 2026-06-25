@@ -17,7 +17,7 @@ from acados_template import AcadosOcp, AcadosOcpSolver, AcadosModel as AcadosTem
 
 from .config_wb import WBConfig
 from .model_wb import WBModel
-from .cost_wb import build_cost_conl, build_residual_terminal, N_PARAM_WB
+from .cost_wb import build_cost_conl, build_residual_terminal, N_PARAM_WB, P_DT
 from .constraints_wb import build_con_h, NH, NBU
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # .../t1_nmpc
@@ -82,7 +82,7 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
     am.f_expl_expr = f_expl
     am.f_impl_expr = xdot - f_expl
     if discrete:
-        am.disc_dyn_expr = _rk4(model, x, u, cfg.dt)
+        am.disc_dyn_expr = _rk4(model, x, u, p[P_DT])
     am.cost_y_expr = y                                           # CONL inner residual = [LS tracking; 10 contact barrier margins]
     am.cost_r_in_psi_expr = r_psi
     am.cost_psi_expr = psi
@@ -117,7 +117,8 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
 
     x0 = model.nominal_state()
     ocp.constraints.x0 = x0
-    ocp.parameter_values = np.zeros(N_PARAM_WB)
+    pv0 = np.zeros(N_PARAM_WB); pv0[P_DT] = cfg.dt
+    ocp.parameter_values = pv0
 
     # Solver regime = faithful port of arXiv:2605.04607 (Stark/DFKI) Appendix B — a WORKING acados biped.
     # The key change vs our prior single-RTI: SQP capped at 3 iters + projection regularization + BALANCE

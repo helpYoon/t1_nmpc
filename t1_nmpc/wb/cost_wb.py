@@ -30,6 +30,9 @@ P_IMPACT = slice(116, 118)    # [impact_L, impact_R]  (impact-proximity scaler p
 # Q@x into the nonlinear RK4 dynamics densified the disc_dyn Jacobian to 135MB (-> -O0 -> 2.5s/solve), and
 # keeping the full u with a rank-deficient P left ker(P) unconstrained -> singular QP -> ACADOS_MINSTEP.
 N_PARAM_WB = 118
+# D4 event-aligned grid: per-stage interval length dt_k (scalar); appended AFTER all existing slots.
+P_DT = N_PARAM_WB            # per-stage interval length dt_k (D4 event-aligned grid); scalar slot
+N_PARAM_WB = N_PARAM_WB + 1  # grow the param vector by one (119 total)
 
 
 def _finite_idx(cfg):
