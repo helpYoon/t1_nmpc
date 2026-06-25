@@ -597,8 +597,11 @@ def test_step_fills_projector_params_and_u_phys_traj():
     x0 = m.nominal_state(); mpc.reset(x0)
     res = mpc.step(x0, 0.0)
     assert res.u_phys_traj is not None and res.u_phys_traj.shape == (cfg.N, cfg.nu)
-    # swing-foot wrench is zeroed by the projector on at least one node of a walking gait
-    assert np.min(np.abs(res.u_phys_traj[:, 0:12]).sum(axis=1)) < 1e-6
+    # the projector zeroes the SWING foot's 6-wrench block; a walking horizon has single-support nodes,
+    # so on some node ONE foot's wrench is ~0 while the other carries weight (the full 12-block never is).
+    wl = np.abs(res.u_phys_traj[:, 0:6]).sum(axis=1)     # left-foot wrench magnitude per node
+    wr = np.abs(res.u_phys_traj[:, 6:12]).sum(axis=1)    # right-foot wrench magnitude per node
+    assert np.min(np.minimum(wl, wr)) < 1e-6
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
