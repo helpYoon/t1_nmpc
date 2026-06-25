@@ -6,10 +6,12 @@ from t1_nmpc.wb.model_wb import WBModel
 from t1_nmpc.wb.cost_wb import (
     build_residual,
     build_residual_terminal,
+    build_cost_conl,
     stage_cost_value,
     N_PARAM_WB,
     P_XREF,
     P_UREF,
+    P_DT,
 )
 
 
@@ -65,3 +67,15 @@ def test_terminal_residual():
     y_e, yref_e, W_e = build_residual_terminal(x, p, cfg)
     assert y_e.shape[0] == 68 and W_e.shape == (68,)
     assert np.allclose(W_e, cfg.terminal_scale * cfg.Q_final)
+
+
+def test_stage_cost_scales_with_pdt():
+    cfg = make_wb_config(); m = WBModel(cfg)
+    x = cs.SX.sym("x", 68); u = cs.SX.sym("u", 40); p = cs.SX.sym("p", N_PARAM_WB)
+    y, yref, psi, r = build_cost_conl(x, u, p, cfg, m)
+    psi_fun = cs.Function("psi", [r, p], [psi])
+    rv = 0.1 * np.ones(y.shape[0])
+    p_a = np.zeros(N_PARAM_WB); p_a[P_DT] = cfg.dt
+    p_b = np.zeros(N_PARAM_WB); p_b[P_DT] = 2.0 * cfg.dt
+    va = float(psi_fun(rv, p_a)); vb = float(psi_fun(rv, p_b))
+    assert abs(vb - 2.0 * va) < 1e-9 and va > 0      # cost doubles when dt doubles

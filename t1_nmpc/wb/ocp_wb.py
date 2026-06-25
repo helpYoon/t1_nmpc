@@ -152,6 +152,9 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
     # Baked compile flags = the single source of truth (build_solver reads them back for the Makefile
     # rewrite + the build hash). -march=native is build-CPU-specific (znver4) — revisit for HW
     # cross-compile. DISCRETE-O1 = 25ms (validated, ~2x ERK-O2's 52ms).
+    # P_DT (in psi) is the SOLE time-weighting; disable acados' default cost_scaling=time_steps to
+    # avoid double-scaling. Terminal (index N) unscaled. (D4)
+    so.cost_scaling = np.ones(cfg.N + 1)
     so.ext_fun_compile_flags = compile_flags
     ocp.code_export_directory = os.path.join(_CODEGEN_DIR, "c_generated_code")
 
