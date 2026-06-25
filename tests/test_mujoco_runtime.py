@@ -28,7 +28,7 @@ def test_rate_decimation_constants():
 def test_mujoco_model_layout_matches_contract():
     rt = MujocoRuntime(load_config(), model=None, mjcf_path=T1_MJCF_PATH)
     m = rt.mj_model
-    assert m.nq == 36 and m.nv == 35 and m.nu == 28
+    assert m.nq == 36 and m.nv == 35 and m.nu == 29  # Waist motor added to t1.xml; all 29 joints actuated
     # base free joint, joints 1..29 are the §A.5 order at qpos[7:36]
     assert MJ_JOINT_QPOS0 == 7
     assert MJ_JOINT_QVEL0 == 6
@@ -36,22 +36,22 @@ def test_mujoco_model_layout_matches_contract():
     assert abs(sum(m.body_mass) - 34.5135) < 0.02
 
 
-def test_actuator_map_skips_waist():
+def test_actuator_map_includes_waist():
     rt = MujocoRuntime(load_config(), model=None, mjcf_path=T1_MJCF_PATH)
-    # 28 actuators, Waist (state local idx 16) maps to -1 (unactuated)
-    assert len(rt.act_to_state_idx) == 28
-    assert 16 not in rt.act_to_state_idx          # Waist joint not actuated
+    # 29 actuators — Waist motor added to t1.xml; Waist (state local idx 16) IS now actuated
+    assert len(rt.act_to_state_idx) == 29
+    assert 16 in rt.act_to_state_idx              # Waist joint now actuated
     # every actuated index is a valid joint-local index 0..28
     assert all(0 <= i <= 28 for i in rt.act_to_state_idx)
 
 
-def test_apply_pd_writes_ctrl_skipping_waist():
+def test_apply_pd_writes_ctrl_including_waist():
     rt = MujocoRuntime(load_config(), model=None, mjcf_path=T1_MJCF_PATH)
     tau29 = np.arange(29, dtype=np.float64)       # local-joint torque vector
     rt._apply_torque(tau29)
     ctrl = np.array(rt.mj_data.ctrl)
-    assert ctrl.shape == (28,)
-    # actuator i receives tau29[act_to_state_idx[i]]; none receives tau29[16]
+    assert ctrl.shape == (29,)                    # all 29 actuators driven
+    # actuator i receives tau29[act_to_state_idx[i]]; Waist (idx 16) torque IS applied
     for a, j in enumerate(rt.act_to_state_idx):
         assert ctrl[a] == tau29[j]
-    assert 16.0 not in ctrl.tolist()
+    assert 16.0 in ctrl.tolist()                  # Waist torque applied (tau29[16] == 16.0)

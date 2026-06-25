@@ -31,7 +31,7 @@ def test_wb_config_qr_blocks_match_taskinfo():
     assert c.Q[66] == 0.0 and c.Q[67] == 0.0
     # R scaled by 1e-3: left fz weight 0.001*1e-3; path-input slot zero
     assert abs(c.R[2] - 0.001 * 1e-3) < 1e-12
-    assert c.R[39] == 0.0
+    assert abs(c.R[39] - 1e-6) < 1e-12   # vdot_s regularized (1e-3 * 1e-3); was 0 before c02f6b2
     # joint limits / pd gains length 27, head-excluded order (arms,waist,legs)
     assert c.joint_lower.shape == (27,) and c.joint_upper.shape == (27,)
     assert np.all(c.joint_lower < c.joint_upper)
