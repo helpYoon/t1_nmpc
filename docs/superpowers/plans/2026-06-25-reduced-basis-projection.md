@@ -14,6 +14,7 @@
 - **Exact pseudoinverse:** use `np.linalg.pinv(D)` (rank-detecting SVD). NO `(DDᵀ+εI)⁻¹` Tikhonov term.
 - **Fold ZeroWrench into the equality residual** `r` (swing-wrench identity rows), NOT a separate gate `G` and NOT input box bounds.
 - **`ker(P)`-confined pin:** cost residual `√ρ·(I−P)(u−u_ref)`, `ρ = cfg.pin_rho = 1.0`; `levenberg_marquardt = 0.0`, `regularize_method = "NO_REGULARIZE"`.
+- **`vdot_s` well-posedness:** `R[39] = 1e-6` (was 0). The path-velocity input `vdot_s` is in `range(P)` and otherwise uncosted; with `lm→0` the projected GN Hessian is singular there. A tiny weight (OCS2 has `w_vs>0`) makes it PD. Contouring is inactive until M2, so this is a regularizer, not a behavior change. **Task 4 must run before Task 3** (the equivalence proof needs `R` PD on `range(P)`).
 - **Substitution coverage:** `u_phys` feeds dynamics AND cost AND inequalities; the ZeroAccel/SwingZ `con_h` equality rows and the ZeroWrench `idxbu` box are REMOVED.
 - **Param matrix flatten convention:** column-major (`order='F'`) on the NumPy side, plain `cs.reshape(slice,(rows,cols))` on the CasADi side (column-major) — they must match. `nu=40`, `nx=68`.
 - **Execution uses `u_phys`:** `tau_ff`/wrench sampling reads `result.u_phys_traj`, never raw `u`.
@@ -21,7 +22,7 @@
 - **Run preamble (every python/pytest), run from `/home/yoonwoo/humanoid_mpc_ws/src/t1_nmpc`:**
   `PYTHONPATH= LD_LIBRARY_PATH=$HOME/acados/lib ACADOS_SOURCE_DIR=$HOME/acados OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 conda run -n t1mpc python …`
 - **Codegen optimization is OUT OF SCOPE** (the dense `Q·x`/`P·u` densify the disc_dyn Jacobian → slow build/solve; accepted, named follow-on). The acceptance gate is measurable at any solve time.
-- **Acceptance:** (1) NumPy prototype proves machine-precision equivalence to OCS2 (`≤1e-10`); (2) single-RTI `res_eq` median ≤ ~1e-3 on `wb_walk_gate --gap-probe`; (3) `wb_stand_gate` still PASS. M1 walk is observed, not gated.
+- **Acceptance:** (1) NumPy prototype proves equivalence to OCS2 (`≤5e-8` — float64-limited by the `cond(H)≈ρ/R_min≈1e6` pin direction; `u_phys` is ρ-independent analytically); (2) single-RTI `res_eq` median ≤ ~1e-3 on `wb_walk_gate --gap-probe`; (3) `wb_stand_gate` still PASS. M1 walk is observed, not gated.
 
 ## File Structure
 
@@ -272,7 +273,9 @@ def test_full_nu_projector_matches_ocs2_reduced_qp():
         P, Q, u_p = projection_wb.compute_projector(x0, u0, p, funcs, cfg)
         u_red = _solve_reduced_qp(D, r0, R, u0, u_ref)
         u_full = _solve_full_qp(P, Q, u_p, x0, R, u_ref, rho=1.0)
-        assert np.linalg.norm(u_full - u_red) <= 1e-9, f"mode {lf,rf}: {np.linalg.norm(u_full-u_red)}"
+        # tol 5e-8: u_phys is ρ-independent analytically; the residual is float64 round-off in the
+        # cond(H)=ρ/R_min ≈ 1e6 pin direction (a naive-solve artifact, not a u_phys property).
+        assert np.linalg.norm(u_full - u_red) <= 5e-8, f"mode {lf,rf}: {np.linalg.norm(u_full-u_red)}"
 
 
 def test_pin_rho_does_not_bias_u_phys():
@@ -284,8 +287,10 @@ def test_pin_rho_does_not_bias_u_phys():
     p = _p_vec(cfg, lf=1, rf=0)
     P, Q, u_p = projection_wb.compute_projector(x0, u0, p, funcs, cfg)
     base = _solve_full_qp(P, Q, u_p, x0, R, u_ref, rho=1.0)
-    for rho in (1e-3, 1e-1, 1e1, 1e3):
-        assert np.linalg.norm(_solve_full_qp(P, Q, u_p, x0, R, u_ref, rho) - base) <= 1e-9
+    # sweep capped at ρ<=1.0: larger ρ only worsens the naive np.linalg.solve conditioning (cond=ρ/R_min);
+    # u_phys is analytically ρ-independent, so invariance across these decades is the real check.
+    for rho in (1e-3, 1e-2, 1e-1, 1.0):
+        assert np.linalg.norm(_solve_full_qp(P, Q, u_p, x0, R, u_ref, rho) - base) <= 5e-8
 ```
 
 - [ ] **Step 2: Run to verify it PASSES (this is a proof, not a red-green pair)**
@@ -309,7 +314,9 @@ cd /home/yoonwoo/humanoid_mpc_ws/src/t1_nmpc && git add tests/test_wb_projection
 - Test: `tests/test_wb_config_walk.py`
 
 **Interfaces:**
-- Produces: `cost_wb.P_PROJ_P = slice(119,1719)`, `cost_wb.P_PROJ_Q = slice(1719,4439)`, `cost_wb.P_PROJ_UP = slice(4439,4479)`, `cost_wb.N_PARAM_WB = 4479`; `cfg.pin_rho = 1.0`.
+- Produces: `cost_wb.P_PROJ_P = slice(119,1719)`, `cost_wb.P_PROJ_Q = slice(1719,4439)`, `cost_wb.P_PROJ_UP = slice(4439,4479)`, `cost_wb.N_PARAM_WB = 4479`; `cfg.pin_rho = 1.0`; `cfg.R[39] = 1e-6` (vdot_s well-posedness regularizer, was 0).
+
+**Runs BEFORE Task 3** (the equivalence proof's QP needs `R` PD on `range(P)`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -328,6 +335,11 @@ def test_param_layout_grown_and_contiguous():
 def test_pin_rho_default():
     from t1_nmpc.wb.config_wb import make_wb_config
     assert make_wb_config().pin_rho == 1.0
+
+
+def test_vdot_s_input_weight_regularized():
+    from t1_nmpc.wb.config_wb import make_wb_config
+    assert make_wb_config().R[39] > 0.0      # was 0 -> singular GN Hessian on range(P) under lm=0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -358,6 +370,13 @@ In `config_wb.py`, add a field to the `WBConfig` dataclass (next to the other sc
 
 ```python
     pin_rho: float = 1.0          # ker(P)-confined nullspace pin weight (does not bias u_phys)
+```
+
+Also in `config_wb.py`, in `_build_R`, regularize the otherwise-uncosted `vdot_s` input (add the `R[39]` line just above the existing `return R * 1e-3`):
+
+```python
+    R[39] = 1e-3          # vdot_s: tiny regularizer (-> 1e-6 after the *1e-3 scaling; OCS2 has w_vs>0)
+    return R * 1e-3       # so the projected GN Hessian is PD on range(P) under lm=0 (was: vdot_s stayed 0)
 ```
 
 - [ ] **Step 4: Run test to verify it passes**

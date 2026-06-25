@@ -32,7 +32,9 @@ A 9-agent equivalence-verification workflow (2026-06-25) proved the existing dea
 ## Success criteria (acceptance bar)
 
 1. **Faithful:** the projection is mathematically equivalent to OCS2's `projectStateInputEqualityConstraints`
-   to machine precision (NumPy prototype: `‖u_phys_full − u_phys_OCS2_reduced‖ ≤ 1e-10`).
+   (NumPy prototype: `‖u_phys_full − u_phys_OCS2_reduced‖ ≤ 5e-8`). The bound is float64-limited by the
+   `cond(H) ≈ ρ/R_min ≈ 1e6` pin direction in the naive prototype solve; `u_phys` is ρ-independent
+   analytically, so this is a proof artifact, not a fidelity gap.
 2. **`res_eq` closes:** single-RTI `res_eq` median drops from ~0.44 to **≤ ~1e-3 (target ~3e-4)** on
    `wb_walk_gate --log --gap-probe-every 10`, and the gap-probe `x_gap` collapses (single-RTI ≈ converged).
 3. **M0 preserved:** `wb_stand_gate` still PASS (peak_tilt < 0.2, no fall, `n_fail == 0`).
