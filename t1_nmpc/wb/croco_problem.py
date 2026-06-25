@@ -37,9 +37,9 @@ class T1ProblemBuilder:
     def make_node(self, stance_fids, x_ref, com_ref, planted, terminal=False):
         nu = self.nv + 6 * len(stance_fids)
         contacts = crocoddyl.ContactModelMultiple(self.state, nu)
-        for fid in stance_fids:
+        for i, fid in enumerate(stance_fids):
             c6 = crocoddyl.ContactModel6D(self.state, fid, planted[fid], _LWA, nu, self._gains)
-            contacts.addContact("c%d" % fid, c6)
+            contacts.addContact("%d_c%d" % (i, fid), c6)
         costs = build_costs(self.state, self.actuation, nu, x_ref, com_ref, stance_fids, self.cfg)
         dam = crocoddyl.DifferentialActionModelContactInvDynamics(
             self.state, self.actuation, contacts, costs)

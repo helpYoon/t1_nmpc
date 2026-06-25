@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 import numpy as np
+import pinocchio as pin
 import crocoddyl
 
 from ..mpc_result import MPCResult
@@ -31,10 +32,8 @@ class CrocoMPC:
         self._us = list(self.problem.quasiStatic([self._x0.copy() for _ in range(self.N)]))
         self._node_times = np.arange(self.N + 1) * float(cfg.dt)
         self.last_solve_s = 0.0
-        self._foot_l, self._foot_r = self.builder.foot_fids
 
     def _nominal66(self):
-        import pinocchio as pin
         q0 = pin.neutral(self.builder.model); q0[2] = self.cfg.nominal_base_height
         q0[6:6 + self.cfg.n_joints] = self.cfg.nominal_joint_pos
         return np.concatenate([q0, np.zeros(self.nv)])
@@ -63,6 +62,7 @@ class CrocoMPC:
         u_traj = self._acados_layout(self.solver.us)
         if not ok:                                        # degrade safely (ZOH-able): flat plan
             x_traj[:] = x_traj[0]
+            u_traj = np.zeros((self.N, 40))
         return MPCResult(
             x_traj=x_traj, u_traj=u_traj, feasible=ok, solve_time=self.last_solve_s,
             mode_schedule=None, status=0 if ok else 1,

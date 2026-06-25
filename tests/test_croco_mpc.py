@@ -27,5 +27,6 @@ def test_single_rti_holds_stand_over_a_few_steps():
     x = x0.copy()
     for _ in range(5):
         res = mpc.step(x, 0.0)
+        assert np.all(np.isfinite(res.u_traj)), "u_traj contains NaN/Inf in iteration"
         x = res.x_traj[1].copy()                 # advance along the plan (no sim)
     assert np.linalg.norm(x[:3] - x0[:3]) < 0.05  # didn't run away

@@ -20,6 +20,23 @@ def test_stand_problem_shape_and_nu_nh():
     assert d.nu == wb.model.nv + 12                  # double support
     assert d.differential.nh == 18                   # 6 underactuated + 12 contact
 
+def test_contact_key_order_matches_stance_order():
+    """Contact keys must follow stance_fids (L, R) order regardless of fid magnitude.
+
+    _acados_layout relies on forces[0:6]=W_l, forces[6:12]=W_r, which only holds
+    when ContactModelMultiple iterates in insertion order matching [L_fid, R_fid].
+    """
+    cfg, wb, b, x0 = _builder_x0()
+    planted = b._planted(x0)
+    data = wb.model.createData()
+    pin.centerOfMass(wb.model, data, x0[:wb.model.nq])
+    com0 = data.com[0].copy()
+    stance = b.foot_fids           # [L_fid, R_fid]
+    node = b.make_node(stance, x0, com0, planted)
+    keys = list(node.differential.contacts.contacts.todict().keys())
+    expected = ["%d_c%d" % (i, fid) for i, fid in enumerate(stance)]
+    assert keys == expected, "Contact key order %s != expected %s" % (keys, expected)
+
 def test_stand_problem_solves_holds_contact():
     cfg, wb, b, x0 = _builder_x0()
     prob = b.build_stand_problem(x0)
