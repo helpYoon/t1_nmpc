@@ -44,3 +44,19 @@ def test_state_weight_comes_from_config_Q():
                                     list(wb.contact_fids), cfg)
     act_model = costs.costs["xreg"].cost.activation
     assert np.allclose(np.asarray(act_model.weights), cfg.Q[:66])
+
+def test_control_weights_slice_mapping():
+    """Directly verify the R-index→w-index mapping in _control_weights.
+    A round-trip test through build_costs cannot catch a pure slice-offset bug because
+    the real cfg.R has identical values in many slots; a synthetic arange exposes it."""
+    R = np.arange(40, dtype=float)
+    w = _control_weights(33, 12, R)
+    assert w.shape == (45,)
+    # base-acceleration slots -> tiny regulariser
+    assert np.all(w[0:6] == 1e-6)
+    # joint qdd -> R[12:39]
+    assert np.allclose(w[6:33], R[12:39])
+    # left foot wrench -> R[0:6]
+    assert np.allclose(w[33:39], R[0:6])
+    # right foot wrench -> R[6:12]
+    assert np.allclose(w[39:45], R[6:12])

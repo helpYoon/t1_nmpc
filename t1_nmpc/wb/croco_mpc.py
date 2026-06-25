@@ -61,6 +61,8 @@ class CrocoMPC:
         x_traj = np.zeros((self.N + 1, 68)); x_traj[:, :66] = xs_arr
         u_traj = self._acados_layout(self.solver.us)
         if not ok:                                        # degrade safely (ZOH-able): flat plan
+            # Emits a freeze-in-place plan (flat state, zero forces) rather than replaying the
+            # last command; never hit in practice while status==0 (isFeasible + finite xs).
             x_traj[:] = x_traj[0]
             u_traj = np.zeros((self.N, 40))
         return MPCResult(

@@ -3,7 +3,6 @@
 Acceptance gate equivalent to the acados M0 (peak_tilt, base_z, no failures)."""
 from __future__ import annotations
 import argparse, json
-import numpy as np
 
 from t1_nmpc.wb.config_wb import make_wb_config
 from t1_nmpc.wb.model_wb import WBModel

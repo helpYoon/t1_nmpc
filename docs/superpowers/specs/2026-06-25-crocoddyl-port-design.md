@@ -147,3 +147,15 @@ All named residual/activation classes verified present in the installed crocoddy
 - **M1 — walking:** gait scheduler drives per-node `stance_fids` (via `gait_wb.mode_to_stance`), swing-foot tracking costs, contact-switch node rebuilding, relaxed-barrier custom activation, foot-collision; closed-loop forward walk in MuJoCo.
 - **M2 — contouring/tracking:** augment state with `s, v_s`, custom progress-coupled tracking residual; hand/joint motion tracking (the `t1_motion_tracking` feature); the `mpc-rl` policy-reference interface.
 - **Hardware deploy:** the `sdk_transport` path.
+
+---
+
+## 8. Deviations & M1 backlog
+
+Faithfulness deviations confirmed by the final M0 review (2026-06-25). Immaterial to the M0 stand; load-bearing for M1 walking.
+
+- **Terminal cost (Q_final / terminal_scale):** The M0 terminal node reuses the running `cfg.Q` at weight 1.0. `cfg.Q_final` and `cfg.terminal_scale` (= 4.0) are defined in `config_wb` but are NOT wired into `croco_costs.build_costs` or `T1ProblemBuilder.make_node`. This is immaterial for the M0 double-support stand (terminal ≈ nominal throughout), but the receding-horizon terminal penalty shapes push-off timing during walking. **M1 action:** add a `terminal=True` branch in `build_costs` that scales state-tracking by `Q_final · terminal_scale`; thread it through `make_node(terminal=True)`.
+
+- **WrenchCone foot rotation:** `croco_costs.build_costs` constructs each `WrenchConeResidual` with `R_foot = np.eye(3)` (world-aligned identity). This is valid at a flat, nominal-yaw stand where the foot frame is near-axis-aligned. During push-off / yawed walking the friction cone and CoP bounds should be expressed in the foot's actual (yawed) rotation frame. **M1 action:** pass the foot frame's rotation `data.oMf[fid].rotation` from `_planted` through `build_costs` (or compute it inside) and use it as `R_foot` in `WrenchConeResidual`.
+
+- **`CrocoMPC.reset` contact placements:** `reset` re-initialises `_xs`/`_us` but does NOT rebuild the shooting problem with fresh contact placements. The contacts remain pinned to the analytical nominal foot placements computed at construction time (from `_nominal66()`), not the measured foot positions from the incoming `x0_68`. The Baumgarte stabilisation corrects the tiny offset, which is fine for M0. **M1 action:** on `reset`, call `self.builder.build_stand_problem(x66)` (or a targeted `update_planted`) to refresh contact placements from the measured state before the first warm-start solve.

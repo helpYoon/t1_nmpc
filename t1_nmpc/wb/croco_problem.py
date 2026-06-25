@@ -28,7 +28,10 @@ class T1ProblemBuilder:
         self._gains = np.array([cfg.foot_pos_err_gain_z, cfg.foot_linvel_err_gain_xy], float)
 
     def _planted(self, x0_66):
-        """SE3 placement of each foot at x0 (held by the contact)."""
+        """SE3 placement of each foot at x0 (held by the contact).
+
+        Returns the full SE3 (position AND orientation) of each foot frame; ContactModel6D
+        constrains both translation and rotation, so the complete placement is required."""
         q = np.asarray(x0_66[:self.model.nq], float)
         data = self.model.createData()
         pin.framesForwardKinematics(self.model, data, q)

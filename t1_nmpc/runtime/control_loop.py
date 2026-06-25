@@ -9,7 +9,7 @@ MPC thread's wall solve-rate equals its SIM rate (a faithful deployment measurem
 idle paced control thread minimizes cross-core cache contention with the MPC thread.
 
 Whether the stand HOLDS at the resulting async rate is the MEASURED RESULT (single-RTI needs ~60Hz;
-if the real solve is slower, it falls) — not a precondition. See runtime/measure_deploy.py.
+if the real solve is slower, it falls) — not a precondition.
 """
 from __future__ import annotations
 

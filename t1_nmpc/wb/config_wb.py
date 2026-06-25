@@ -166,9 +166,7 @@ class WBConfig:
     max_yaw_rate: float = 1.0
 
     # --- friction / CoP / joint-limit barriers (task.info contacts:456-494) ---
-    # contact-equality input PROJECTION (ocp_wb): u_phys = u - D^T (D D^T + eps I)^-1 r, r = gated
-    # [ZeroAccel+SwingZ+ZeroWrench]. eps regularizes the gated zero rows + the near-knee-singular A_d
-    # (residual ~ O(eps) on active rows; tune up if conditioning bites near knee extension).
+    # contact_proj_eps / pin_rho: dormant config retained for future backends.
     contact_proj_eps: float = 1e-6
     pin_rho: float = 1.0          # ker(P)-confined nullspace pin weight (does not bias u_phys)
     friction_mu: float = 0.4
