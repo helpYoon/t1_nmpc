@@ -134,3 +134,19 @@ def test_full_nu_matches_ocs2_reduced_with_dx():
         H = P.T @ R @ P + 1.0 * ImP; b = -P.T @ R @ (c - u_ref) + 1.0 * ImP @ u_ref
         u = np.linalg.solve(H, b); u_full = P @ u + c
         assert np.linalg.norm(u_full - u_red) <= 5e-8, f"dx mode {lf,rf}: {np.linalg.norm(u_full-u_red)}"
+
+
+# ---------------------------------------------------------------------------
+# Task 5: ker(P)-confined pin block in build_cost_conl
+# ---------------------------------------------------------------------------
+import casadi as cs
+from t1_nmpc.wb import cost_wb
+
+
+def test_cost_appends_kerp_pin_block():
+    cfg = make_wb_config(); m = WBModel(cfg)
+    x = cs.SX.sym("x", cfg.nx); u = cs.SX.sym("u", cfg.nu); p = cs.SX.sym("p", cost_wb.N_PARAM_WB)
+    Pm = cs.reshape(p[cost_wb.P_PROJ_P], (cfg.nu, cfg.nu))
+    y0, _, _, _ = cost_wb.build_cost_conl(x, u, p, cfg, m)                       # no pin
+    y1, _, psi1, _ = cost_wb.build_cost_conl(x, u, p, cfg, m, u_raw=u, P_mat=Pm)  # with pin
+    assert y1.shape[0] == y0.shape[0] + cfg.nu                                   # +40 pin rows

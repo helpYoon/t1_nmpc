@@ -25,10 +25,10 @@ P_CONTACT = slice(108, 110)   # [left_stance, right_stance] in {0,1}
 P_SWINGZ = slice(110, 116)    # [zL, zdotL, zddotL, zR, zdotR, zddotR]  (swing-foot z spline)
 P_IMPACT = slice(116, 118)    # [impact_L, impact_R]  (impact-proximity scaler per foot)
 # The contact EQUALITIES (ZeroAccel/SwingZ) are NOT params: they are con_h rows on the RAW input, toggled
-# active/inactive per node via the constraint bounds (constraints_wb). The input-PROJECTION approach
-# (u_phys = P@u+Q@x+u_p as params) was tried 2026-06-24 and REJECTED: composing the dense state-coupling
-# Q@x into the nonlinear RK4 dynamics densified the disc_dyn Jacobian to 135MB (-> -O0 -> 2.5s/solve), and
-# keeping the full u with a rank-deficient P left ker(P) unconstrained -> singular QP -> ACADOS_MINSTEP.
+# active/inactive per node via the constraint bounds (constraints_wb). The reduced-basis projector
+# (u_phys = P@u_raw + Q@x + u_p, P/Q/u_p as per-node params) is now used, with a ker(P)-confined pin
+# 0.5·ρ·||(I−P)(u_raw−u_ref)||² appended to the cost to regularise the nullspace. (The 2026-06-24
+# rejection was the ε-regularised square-projector variant that densified the RK4 Jacobian.)
 N_PARAM_WB = 118
 # D4 event-aligned grid: per-stage interval length dt_k (scalar); appended AFTER all existing slots.
 P_DT = N_PARAM_WB            # 118
@@ -152,27 +152,31 @@ def _contact_barrier_args(x, u, p, cfg, model):
     return cs.vertcat(*rows)                                 # 10
 
 
-def build_cost_conl(x, u, p, cfg, model):
-    """Stage CONVEX_OVER_NONLINEAR cost = 0.5*sum(W*y_ls^2) + sum(relaxed_barrier(h_contact)).
-    Returns (y_expr, yref(zeros), psi(r), r_sym): y = [LS tracking residual; 10 gated contact
-    margins]; psi applies the diagonal LS weight to the tracking rows and the interior-repulsive
-    RelaxedBarrier (friction mu/delta, CoP mu/delta from cfg) to the 10 margin rows. This is the
-    faithful OCS2 contact handling (soft repulsive barrier) the hard-constraint port had bypassed."""
+def build_cost_conl(x, u, p, cfg, model, u_raw=None, P_mat=None):
+    """Stage CONVEX_OVER_NONLINEAR cost; `u` is u_phys (the projected input). When (u_raw, P_mat) are
+    given, append the ker(P)-confined pin √ρ·(I−P)(u_raw−u_ref) (pin rows are pure-LS; ρ does not bias
+    u_phys because (I−P) is orthogonal to range(P))."""
     y_ls, yref_ls, W_ls = build_residual(x, u, p, cfg, model)
     h_bar = _contact_barrier_args(x, u, p, cfg, model)      # 10 friction/CoP margins (RelaxedBarrier)
-    h_coll = _foot_collision_residual(x, p, cfg, model)     # 16 foot/knee collision margins (piecewise-poly barrier)
-    y = cs.vertcat(y_ls, h_bar, h_coll)
-    n_ls = y_ls.shape[0]; n_bar = h_bar.shape[0]
+    h_coll = _foot_collision_residual(x, p, cfg, model)     # 16 foot/knee collision margins
+    blocks = [y_ls, h_bar, h_coll]
+    n_ls = y_ls.shape[0]; n_bar = h_bar.shape[0]; n_coll = h_coll.shape[0]
+    if u_raw is not None and P_mat is not None:
+        u_ref = p[P_UREF]
+        y_pin = (u_raw - u_ref) - P_mat @ (u_raw - u_ref)   # (I−P)(u_raw−u_ref)
+        blocks.append(y_pin)
+    y = cs.vertcat(*blocks)
     r = cs.SX.sym("r_psi", y.shape[0])
     psi = 0.5 * cs.dot(cs.DM(np.asarray(W_ls, dtype=np.float64)), r[0:n_ls] ** 2)
-    # per-foot barrier row params: friction, then 4 CoP; x2 feet
     bar = ([(cfg.friction_barrier_mu, cfg.friction_barrier_delta)]
            + [(cfg.cop_barrier_mu, cfg.cop_barrier_delta)] * 4) * 2
     for j, (mu, dl) in enumerate(bar):
         psi = psi + _relaxed_barrier(r[n_ls + j], float(mu), float(dl))
-    for j in range(h_coll.shape[0]):                        # 16 leg-collision margins -> piecewise-poly barrier
+    for j in range(n_coll):
         psi = psi + _piecewise_poly_barrier(r[n_ls + n_bar + j], cfg.collision_barrier_mu, cfg.collision_barrier_delta)
-    # Faithful time-integral (normalized so the nominal grid dt_k=cfg.dt gives factor 1 -> tuning preserved; relative weight stays proportional to dt_k, OCS2 SqpSolver.cpp:387,457).
+    if u_raw is not None and P_mat is not None:
+        off = n_ls + n_bar + n_coll
+        psi = psi + 0.5 * float(cfg.pin_rho) * cs.sumsqr(r[off:off + cfg.nu])
     psi = (p[P_DT] / cfg.dt) * psi
     yref = np.zeros(y.shape[0])
     return y, yref, psi, r
