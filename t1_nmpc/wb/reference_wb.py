@@ -94,3 +94,10 @@ def build_reference(x_meas, comm_filt, gait, t0, node_times, cfg, model):
                 if rf:
                     u_ref[k, 8] = mg / n_st
     return x_ref, u_ref
+
+
+def build_reference_66(x_meas, comm_filt, gait, t0, node_times, cfg, model):
+    """66-dim per-node state reference for the crocoddyl walk (drops the 68-dim acados s,v_s
+    path slots; the gravity-split u_ref is discarded — crocoddyl's ID supplies gravity)."""
+    x_ref, _u_ref = build_reference(x_meas, comm_filt, gait, t0, node_times, cfg, model)
+    return np.ascontiguousarray(x_ref[:, :66])
