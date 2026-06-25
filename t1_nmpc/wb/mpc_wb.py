@@ -1,0 +1,135 @@
+"""WholeBodyMPC — closed-loop single-RTI wrapper around the whole-body acados OCP.
+
+M0: STAND (double stance, constant nominal reference).
+M1: per-node walking rollout — per-node contact flags + swing-Z + impact proximity
+    sampled from the gait schedule at t + k*dt.
+
+Mirrors acados_mpc/mpc.py interface: set_command / reset / step(x_meas, t)->MPCResult.
+"""
+from __future__ import annotations
+
+import time
+
+import numpy as np
+
+from .config_wb import WBConfig
+from .cost_wb import N_PARAM_WB, P_XREF, P_UREF, P_CONTACT, P_SWINGZ, P_IMPACT
+from .constraints_wb import stage_constraint_bounds, stage_wrench_bounds
+from .gait_wb import SLOW_WALK, STANCE_GAIT
+from .reference_wb import build_reference, filter_command
+from .ocp_wb import make_ocp, build_solver
+from ..mpc_result import MPCResult
+
+
+def build_node_params(x_meas, t, comm_filt, gait, cfg, model) -> np.ndarray:
+    """Per-node acados parameter matrix (N+1, N_PARAM_WB): folded reference (x_ref, u_ref) +
+    per-node contact flags + swing-Z spline + impact proximity sampled from the gait at t+k*dt."""
+    node_times = t + np.arange(cfg.N + 1) * cfg.dt
+    x_ref, u_ref = build_reference(x_meas, comm_filt, gait, t, node_times, cfg, model)
+    P = np.zeros((cfg.N + 1, N_PARAM_WB))
+    for k, tk in enumerate(node_times):
+        P[k, P_XREF] = x_ref[k]
+        if k < len(u_ref):
+            P[k, P_UREF] = u_ref[k]
+        lf, rf = gait.contact_flags(tk)
+        P[k, P_CONTACT] = [float(lf), float(rf)]
+        zL = gait.swing_z(tk, 0); zR = gait.swing_z(tk, 1)
+        P[k, P_SWINGZ] = [zL[0], zL[1], zL[2], zR[0], zR[1], zR[2]]
+        P[k, P_IMPACT] = [gait.impact_proximity(tk, 0), gait.impact_proximity(tk, 1)]
+    return P
+
+
+def shift_warmstart(x_prev, u_prev, t_prev, t_now, cfg):
+    """trajectorySpread warm-start: time-shift the previous primal forward by (t_now - t_prev).
+
+    New node j sits at absolute time t_now + j*dt; sample the previous solution (anchored at t_prev,
+    nodes at t_prev + i*dt) there by linear interpolation, holding the last node past the horizon end.
+    For t_now - t_prev == dt this is the integer shift x_guess[j] = x_prev[j+1] the oracle proved fixes
+    the ratchet (sim/wb_walk_warmstart_probe.py); the real loop solves faster than dt -> fractional.
+    ponytail: interp-only. OCS2 also CLAMPS across a contact switch (no blend); the one-node
+    stance/swing blend here is just a guess the RTI absorbs -- add the clamp only if a gate shows it.
+    """
+    frac = (t_now - t_prev) / cfg.dt
+
+    def _shift(traj):
+        last = len(traj) - 1
+        out = np.empty_like(traj)
+        for j in range(len(traj)):
+            s = j + frac
+            i0 = min(int(np.floor(s)), last)
+            i1 = min(i0 + 1, last)
+            w = float(np.clip(s - i0, 0.0, 1.0))
+            out[j] = (1.0 - w) * traj[i0] + w * traj[i1]
+        return out
+
+    return _shift(x_prev), _shift(u_prev)
+
+
+class WholeBodyMPC:
+    def __init__(self, cfg: WBConfig, model, solver=None, max_iter: int = 1):
+        self.cfg = cfg; self.model = model
+        self.ocp, self.bundle = make_ocp(cfg)                   # DISCRETE raw-u; contact equalities = con_h toggled by per-node bounds
+        self.solver = solver if solver is not None else build_solver(self.ocp)
+        self.solver.options_set("max_iter", int(max_iter))      # RUNTIME SQP iters (lowers the ceiling baked in ocp_wb);
+        # changing this NEVER rebuilds. Default 1 = single-RTI; pass max_iter>1 (<=ceiling) for a convergence probe.
+        self._cmd = np.zeros(5)                     # [vx, vy, wz, dheight, dpitch]
+        self._gait = STANCE_GAIT
+        self._comm_filt = np.array([0.0, 0.0, cfg.nominal_base_height, 0.0])
+        self._x_nom = model.nominal_state()
+        self._x_prev = self._u_prev = None; self._t_prev = None   # warm-start carry (trajectorySpread)
+
+    def set_command(self, cmd) -> None:
+        self._cmd = np.asarray(cmd, dtype=np.float64).copy()
+        speed = abs(self._cmd[0]) + abs(self._cmd[1]) + abs(self._cmd[2])
+        self._gait = SLOW_WALK if speed > 1e-3 else STANCE_GAIT
+
+    def reset(self, x0) -> None:
+        x0 = np.asarray(x0, dtype=np.float64)
+        self._comm_filt = np.array([0.0, 0.0, self.cfg.nominal_base_height, 0.0])
+        for k in range(self.cfg.N + 1):
+            self.solver.set(k, "x", x0)
+        u0 = np.zeros(self.cfg.nu)
+        u0[2] = u0[8] = self.model.total_mass() * 9.81 / 2.0
+        for k in range(self.cfg.N):
+            self.solver.set(k, "u", u0)
+        self._x_prev = self._u_prev = None; self._t_prev = None   # no stale warm-start across a reset
+
+    def step(self, x_meas, t) -> MPCResult:
+        cfg = self.cfg; t0 = time.perf_counter()
+        x_meas = np.asarray(x_meas, dtype=np.float64)
+        comm = np.array([self._cmd[0], self._cmd[1],
+                         cfg.nominal_base_height + self._cmd[3], self._cmd[2]])
+        # OCS2 bounds the command UPSTREAM (reference.info maxDisplacementVelocity 1.0/0.6, maxRotation
+        # 1.0) before the 0.8 EMA; clamp here so out-of-range commands match t1_controller.
+        comm[0] = np.clip(comm[0], -cfg.max_vel_x, cfg.max_vel_x)
+        comm[1] = np.clip(comm[1], -cfg.max_vel_y, cfg.max_vel_y)
+        comm[3] = np.clip(comm[3], -cfg.max_yaw_rate, cfg.max_yaw_rate)
+        self._comm_filt = filter_command(self._comm_filt, comm)
+        P = build_node_params(x_meas, t, self._comm_filt, self._gait, cfg, self.model)
+        # Warm-start (where single-RTI linearizes) = the shifted previous solution (trajectorySpread), or x_meas at t0.
+        if self._x_prev is not None:
+            xg, ug = shift_warmstart(self._x_prev, self._u_prev, self._t_prev, t, cfg)
+        else:
+            u0 = np.zeros(cfg.nu); u0[2] = u0[8] = self.model.total_mass() * 9.81 / 2.0
+            xg = np.tile(x_meas, (cfg.N + 1, 1)); ug = np.tile(u0, (cfg.N, 1))
+        for k in range(cfg.N + 1):
+            self.solver.set(k, "x", xg[k])
+        for k in range(cfg.N):
+            self.solver.set(k, "u", ug[k])
+        for k in range(cfg.N + 1):
+            self.solver.set(k, "p", P[k])
+        # Per-node contact activation: con_h bounds (ZeroAccel stance / SwingZ swing) + swing-wrench box bounds.
+        for k in range(cfg.N):
+            lf, rf = P[k, P_CONTACT]
+            lh, uh = stage_constraint_bounds(lf, rf)
+            self.solver.constraints_set(k, "lh", lh); self.solver.constraints_set(k, "uh", uh)
+            lbu, ubu = stage_wrench_bounds(lf, rf)
+            self.solver.constraints_set(k, "lbu", lbu); self.solver.constraints_set(k, "ubu", ubu)
+        self.solver.constraints_set(0, "lbx", x_meas)
+        self.solver.constraints_set(0, "ubx", x_meas)
+        status = self.solver.solve()
+        x_traj = np.array([self.solver.get(k, "x") for k in range(cfg.N + 1)])
+        u_traj = np.array([self.solver.get(k, "u") for k in range(cfg.N)])
+        self._x_prev, self._u_prev, self._t_prev = x_traj, u_traj, t
+        return MPCResult(x_traj=x_traj, u_traj=u_traj, feasible=(status == 0),
+                         solve_time=time.perf_counter() - t0, mode_schedule=None, status=int(status))
