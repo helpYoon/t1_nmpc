@@ -13,19 +13,20 @@ import time
 import numpy as np
 
 from .config_wb import WBConfig
-from .cost_wb import N_PARAM_WB, P_XREF, P_UREF, P_CONTACT, P_SWINGZ, P_IMPACT
+from .cost_wb import N_PARAM_WB, P_XREF, P_UREF, P_CONTACT, P_SWINGZ, P_IMPACT, P_DT
 from .constraints_wb import stage_constraint_bounds, stage_wrench_bounds
 from .gait_wb import SLOW_WALK, STANCE_GAIT
+from .grid_wb import event_aligned_grid
 from .reference_wb import build_reference, filter_command
 from .ocp_wb import make_ocp, build_solver
 from ..mpc_result import MPCResult
 
 
-def build_node_params(x_meas, t, comm_filt, gait, cfg, model) -> np.ndarray:
-    """Per-node acados parameter matrix (N+1, N_PARAM_WB): folded reference (x_ref, u_ref) +
-    per-node contact flags + swing-Z spline + impact proximity sampled from the gait at t+k*dt."""
-    node_times = t + np.arange(cfg.N + 1) * cfg.dt
-    x_ref, u_ref = build_reference(x_meas, comm_filt, gait, t, node_times, cfg, model)
+def build_node_params(x_meas, node_times, comm_filt, gait, cfg, model) -> np.ndarray:
+    """Per-node acados parameter matrix (N+1, N_PARAM_WB) on the given (possibly non-uniform)
+    node_times: folded reference + contact flags + swing-Z + impact + per-stage dt (P_DT)."""
+    node_times = np.asarray(node_times, float)
+    x_ref, u_ref = build_reference(x_meas, comm_filt, gait, node_times[0], node_times, cfg, model)
     P = np.zeros((cfg.N + 1, N_PARAM_WB))
     for k, tk in enumerate(node_times):
         P[k, P_XREF] = x_ref[k]
@@ -36,6 +37,9 @@ def build_node_params(x_meas, t, comm_filt, gait, cfg, model) -> np.ndarray:
         zL = gait.swing_z(tk, 0); zR = gait.swing_z(tk, 1)
         P[k, P_SWINGZ] = [zL[0], zL[1], zL[2], zR[0], zR[1], zR[2]]
         P[k, P_IMPACT] = [gait.impact_proximity(tk, 0), gait.impact_proximity(tk, 1)]
+    dts = np.diff(node_times)
+    P[:cfg.N, P_DT] = dts
+    P[cfg.N, P_DT] = dts[-1]                  # terminal slot unused by dynamics
     return P
 
 
@@ -77,6 +81,7 @@ class WholeBodyMPC:
         self._comm_filt = np.array([0.0, 0.0, cfg.nominal_base_height, 0.0])
         self._x_nom = model.nominal_state()
         self._x_prev = self._u_prev = None; self._t_prev = None   # warm-start carry (trajectorySpread)
+        self._node_times_prev = None
 
     def set_command(self, cmd) -> None:
         self._cmd = np.asarray(cmd, dtype=np.float64).copy()
@@ -93,6 +98,7 @@ class WholeBodyMPC:
         for k in range(self.cfg.N):
             self.solver.set(k, "u", u0)
         self._x_prev = self._u_prev = None; self._t_prev = None   # no stale warm-start across a reset
+        self._node_times_prev = None
 
     def step(self, x_meas, t) -> MPCResult:
         cfg = self.cfg; t0 = time.perf_counter()
@@ -105,7 +111,8 @@ class WholeBodyMPC:
         comm[1] = np.clip(comm[1], -cfg.max_vel_y, cfg.max_vel_y)
         comm[3] = np.clip(comm[3], -cfg.max_yaw_rate, cfg.max_yaw_rate)
         self._comm_filt = filter_command(self._comm_filt, comm)
-        P = build_node_params(x_meas, t, self._comm_filt, self._gait, cfg, self.model)
+        node_times = event_aligned_grid(t, self._gait, cfg)
+        P = build_node_params(x_meas, node_times, self._comm_filt, self._gait, cfg, self.model)
         # Warm-start (where single-RTI linearizes) = the shifted previous solution (trajectorySpread), or x_meas at t0.
         if self._x_prev is not None:
             xg, ug = shift_warmstart(self._x_prev, self._u_prev, self._t_prev, t, cfg)
@@ -131,5 +138,6 @@ class WholeBodyMPC:
         x_traj = np.array([self.solver.get(k, "x") for k in range(cfg.N + 1)])
         u_traj = np.array([self.solver.get(k, "u") for k in range(cfg.N)])
         self._x_prev, self._u_prev, self._t_prev = x_traj, u_traj, t
+        self._node_times_prev = node_times
         return MPCResult(x_traj=x_traj, u_traj=u_traj, feasible=(status == 0),
                          solve_time=time.perf_counter() - t0, mode_schedule=None, status=int(status))
