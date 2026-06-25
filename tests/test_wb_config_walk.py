@@ -13,9 +13,20 @@ def test_walking_config_fields():
 
 
 def test_param_layout_grown_and_contiguous():
-    assert cost_wb.N_PARAM_WB == 119                  # D4 appended P_DT -> 118 + 1
     assert cost_wb.P_XREF == slice(0, 68) and cost_wb.P_UREF == slice(68, 108)
-    assert cost_wb.P_CONTACT == slice(108, 110)
-    assert cost_wb.P_SWINGZ == slice(110, 116)
-    assert cost_wb.P_IMPACT == slice(116, 118)
-    assert cost_wb.P_DT == 118                        # D4: per-stage dt_k appended AFTER all existing slots
+    assert cost_wb.P_CONTACT == slice(108, 110) and cost_wb.P_SWINGZ == slice(110, 116)
+    assert cost_wb.P_IMPACT == slice(116, 118) and cost_wb.P_DT == 118
+    assert cost_wb.P_PROJ_P == slice(119, 1719)      # 40*40
+    assert cost_wb.P_PROJ_Q == slice(1719, 4439)     # 40*68
+    assert cost_wb.P_PROJ_UP == slice(4439, 4479)    # 40
+    assert cost_wb.N_PARAM_WB == 4479
+
+
+def test_pin_rho_default():
+    from t1_nmpc.wb.config_wb import make_wb_config
+    assert make_wb_config().pin_rho == 1.0
+
+
+def test_vdot_s_input_weight_regularized():
+    from t1_nmpc.wb.config_wb import make_wb_config
+    assert make_wb_config().R[39] > 0.0      # was 0 -> singular GN Hessian on range(P) under lm=0

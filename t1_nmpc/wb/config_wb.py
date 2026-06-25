@@ -57,7 +57,8 @@ def _build_R() -> np.ndarray:  # task.info:296-347
     R[0:6] = wrench
     R[6:12] = wrench
     R[12:39] = [0.05] * 14 + [0.005] * 13              # qdd: arms, waist+legs
-    return R * 1e-3  # task.info R scaling 1e-3; path slot vdot_s (idx 39) stays 0
+    R[39] = 1e-3          # vdot_s: tiny regularizer (-> 1e-6 after the *1e-3 scaling; OCS2 has w_vs>0)
+    return R * 1e-3       # so the projected GN Hessian is PD on range(P) under lm=0 (was: vdot_s stayed 0)
 
 
 def _build_Q_final() -> np.ndarray:  # task.info:351-424
@@ -169,6 +170,7 @@ class WBConfig:
     # [ZeroAccel+SwingZ+ZeroWrench]. eps regularizes the gated zero rows + the near-knee-singular A_d
     # (residual ~ O(eps) on active rows; tune up if conditioning bites near knee extension).
     contact_proj_eps: float = 1e-6
+    pin_rho: float = 1.0          # ker(P)-confined nullspace pin weight (does not bias u_phys)
     friction_mu: float = 0.4
     friction_barrier_mu: float = 0.2
     friction_barrier_delta: float = 5.0

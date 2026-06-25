@@ -31,8 +31,16 @@ P_IMPACT = slice(116, 118)    # [impact_L, impact_R]  (impact-proximity scaler p
 # keeping the full u with a rank-deficient P left ker(P) unconstrained -> singular QP -> ACADOS_MINSTEP.
 N_PARAM_WB = 118
 # D4 event-aligned grid: per-stage interval length dt_k (scalar); appended AFTER all existing slots.
-P_DT = N_PARAM_WB            # per-stage interval length dt_k (D4 event-aligned grid); scalar slot
-N_PARAM_WB = N_PARAM_WB + 1  # grow the param vector by one (119 total)
+P_DT = N_PARAM_WB            # 118
+N_PARAM_WB = N_PARAM_WB + 1  # 119
+# Reduced-basis projection (D1): per-node affine projector u_phys = P@u + Q@x + u_p, passed as params.
+# Matrices stored COLUMN-MAJOR (order='F'); ocp_wb reconstructs via cs.reshape (also column-major). nu=40, nx=68.
+P_PROJ_P = slice(N_PARAM_WB, N_PARAM_WB + 40 * 40)              # 119:1719  (P, 40x40)
+N_PARAM_WB = N_PARAM_WB + 40 * 40                               # 1719
+P_PROJ_Q = slice(N_PARAM_WB, N_PARAM_WB + 40 * 68)             # 1719:4439 (Q, 40x68)
+N_PARAM_WB = N_PARAM_WB + 40 * 68                              # 4439
+P_PROJ_UP = slice(N_PARAM_WB, N_PARAM_WB + 40)                 # 4439:4479 (u_p, 40)
+N_PARAM_WB = N_PARAM_WB + 40                                    # 4479
 
 
 def _finite_idx(cfg):
