@@ -13,8 +13,9 @@ def test_walking_config_fields():
 
 
 def test_param_layout_grown_and_contiguous():
-    assert cost_wb.N_PARAM_WB == 118
+    assert cost_wb.N_PARAM_WB == 119                  # D4 appended P_DT -> 118 + 1
     assert cost_wb.P_XREF == slice(0, 68) and cost_wb.P_UREF == slice(68, 108)
     assert cost_wb.P_CONTACT == slice(108, 110)
     assert cost_wb.P_SWINGZ == slice(110, 116)
     assert cost_wb.P_IMPACT == slice(116, 118)
+    assert cost_wb.P_DT == 118                        # D4: per-stage dt_k appended AFTER all existing slots
