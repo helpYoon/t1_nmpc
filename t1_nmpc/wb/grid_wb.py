@@ -18,8 +18,9 @@ def event_aligned_grid(t0: float, gait, cfg) -> np.ndarray:
     switches = [s for s in gait.switch_times_in(t0, t0 + T)
                 if gait.contact_flags(s - eps) != gait.contact_flags(s + eps)
                 and (t0 + 0.5 * dt) < s < (t0 + T - 0.5 * dt)]
+    assert len(switches) + 1 <= N, "more horizon segments than shooting intervals (gait too dense for N)"
     bounds = np.array([t0, *switches, t0 + T], dtype=np.float64)
-    seg_len = np.diff(bounds)                                  # M segments, each >= 0.5*dt
+    seg_len = np.diff(bounds)                                  # M segments, each > 0.5*dt
     n = np.maximum(1, np.round(seg_len / dt).astype(int))     # intervals per segment ~ uniform dt
     while n.sum() != N:                                        # reconcile to exactly N via longest segment
         if n.sum() > N:

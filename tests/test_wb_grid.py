@@ -22,7 +22,8 @@ def test_switches_land_on_nodes():
     t0 = 0.2
     nt = event_aligned_grid(t0, SLOW_WALK, cfg)
     _check_basic(nt, t0)
-    for s in SLOW_WALK.switch_times_in(t0, t0 + T):
+    # SLOW_WALK's real contact-mode-change switches inside [0.2, 0.2+T]: 0.65 (LF->STANCE), 0.85 (STANCE->RF)
+    for s in (0.65, 0.85):
         assert np.min(np.abs(nt - s)) < 1e-9, f"switch {s} not on a node"
 
 def test_dt_stays_near_nominal():
