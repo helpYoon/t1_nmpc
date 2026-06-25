@@ -214,9 +214,15 @@ def build_solver(ocp: AcadosOcp, force_rebuild: bool = False) -> AcadosOcpSolver
     # long-pole, so compile them at -O0 (instant) via a pattern-specific CFLAGS override — the .so is
     # functionally identical (the hess is never called at runtime under GAUSS_NEWTON).
     txt += "\n%_hess.o: CFLAGS := -fPIC -std=c99 -O0\n"
+    # The reduced-basis projector substitutes a dense Q@x term into the RK4, densifying the disc-dyn
+    # Jacobian to ~136 MB. At -O2 gcc needs ~50 GB for that single file and OOM-CRASHES the machine.
+    # Force the dynamics objects to -O0 (peaks ~7 GB) and serialize (-j2) so the build can NEVER exhaust
+    # RAM. The runtime cost (-O0 Jacobian eval) is the deferred codegen-optimization item, not a gate.
+    txt += "\n%_dyn_disc_phi_fun_jac.o: CFLAGS := -fPIC -std=c99 -O0\n"
+    txt += "\n%_dyn_disc_phi_fun.o: CFLAGS := -fPIC -std=c99 -O0\n"
     with open(mk, "w") as fh:
         fh.write(txt)
-    subprocess.run(["make", "-j", str(os.cpu_count() or 4), "ocp_shared_lib"], cwd=cgd, check=True)
+    subprocess.run(["make", "-j", "2", "ocp_shared_lib"], cwd=cgd, check=True)
     with open(marker, "w") as fh:
         fh.write(cur)
     return AcadosOcpSolver(None, json_file=json, generate=False, build=False, verbose=False)
