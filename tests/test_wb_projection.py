@@ -150,3 +150,23 @@ def test_cost_appends_kerp_pin_block():
     y0, _, _, _ = cost_wb.build_cost_conl(x, u, p, cfg, m)                       # no pin
     y1, _, psi1, _ = cost_wb.build_cost_conl(x, u, p, cfg, m, u_raw=u, P_mat=Pm)  # with pin
     assert y1.shape[0] == y0.shape[0] + cfg.nu                                   # +40 pin rows
+
+
+# ---------------------------------------------------------------------------
+# Task 6: OCP wiring — u_phys into dynamics+cost, contact con_h removed
+# ---------------------------------------------------------------------------
+from t1_nmpc.wb.ocp_wb import make_ocp
+
+
+def test_ocp_has_projector_params_and_no_contact_con_h():
+    cfg = make_wb_config()
+    ocp, _ = make_ocp(cfg)
+    assert ocp.parameter_values.shape[0] == cost_wb.N_PARAM_WB == 4479
+    assert ocp.solver_options.levenberg_marquardt == 0.0
+    assert ocp.solver_options.regularize_method == "NO_REGULARIZE"
+    # con_h contact-equality rows removed (no nonlinear constraint expr left)
+    _con_h = getattr(ocp.model, "con_h_expr", None)
+    assert _con_h is None or (hasattr(_con_h, "shape") and _con_h.shape[0] == 0) or _con_h == []
+    # ZeroWrench input box removed; joint-position box (idxbx) kept
+    assert getattr(ocp.constraints, "idxbu", np.array([])).size == 0
+    assert ocp.constraints.idxbx.size == 27

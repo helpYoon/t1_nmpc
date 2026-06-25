@@ -13,12 +13,11 @@ import subprocess
 
 import casadi as cs
 import numpy as np
-from acados_template import AcadosOcp, AcadosOcpSolver, AcadosModel as AcadosTemplateModel, ACADOS_INFTY
+from acados_template import AcadosOcp, AcadosOcpSolver, AcadosModel as AcadosTemplateModel
 
 from .config_wb import WBConfig
 from .model_wb import WBModel
-from .cost_wb import build_cost_conl, build_residual_terminal, N_PARAM_WB, P_DT
-from .constraints_wb import build_con_h, NH, NBU
+from .cost_wb import build_cost_conl, build_residual_terminal, N_PARAM_WB, P_DT, P_PROJ_P, P_PROJ_Q, P_PROJ_UP
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # .../t1_nmpc
 # Persistent (not /tmp, which is wiped on reboot) so the compiled solver survives; env overrides for experiments.
@@ -38,10 +37,9 @@ COMPILE_FLAGS_DISCRETE = ("-O2 -fno-schedule-insns -fno-schedule-insns2 -fno-gcs
 class WBBundle:
     """CasADi evaluators exposed for tests."""
 
-    def __init__(self, model, cost_fun, con_h_fun):
+    def __init__(self, model, cost_fun):
         self.model = model
         self.cost_fun = cost_fun
-        self.con_h_fun = con_h_fun
 
 
 def _rk4(model, x, u, dt):
@@ -69,11 +67,15 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
     u = cs.SX.sym("u", cfg.nu)
     p = cs.SX.sym("p", N_PARAM_WB)
 
-    # RAW input (no projection): the contact equalities are con_h rows toggled active/inactive per node.
-    f_expl = model.flow_expr(x, u)
-    y, yref, psi, r_psi = build_cost_conl(x, u, p, cfg, model)
+    # Reduced-basis projection: reconstruct the per-node affine projector (column-major; mpc_wb fills order='F').
+    Pm = cs.reshape(p[P_PROJ_P], (cfg.nu, cfg.nu))
+    Qm = cs.reshape(p[P_PROJ_Q], (cfg.nu, cfg.nx))
+    up = p[P_PROJ_UP]
+    u_phys = Pm @ u + Qm @ x + up
+
+    f_expl = model.flow_expr(x, u_phys)
+    y, yref, psi, r_psi = build_cost_conl(x, u_phys, p, cfg, model, u_raw=u, P_mat=Pm)
     y_e, yref_e, Wdiag_e = build_residual_terminal(x, p, cfg)
-    con_h, lh_def, uh_def = build_con_h(x, u, p, cfg, model)     # 14 raw ZeroAccel/SwingZ rows; lh/uh default all-inactive
 
     am = AcadosTemplateModel()
     am.name = "t1_wb"
@@ -82,13 +84,12 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
     am.f_expl_expr = f_expl
     am.f_impl_expr = xdot - f_expl
     if discrete:
-        am.disc_dyn_expr = _rk4(model, x, u, p[P_DT])
-    am.cost_y_expr = y                                           # CONL inner residual = [LS tracking; 10 contact barrier margins]
+        am.disc_dyn_expr = _rk4(model, x, u_phys, p[P_DT])
+    am.cost_y_expr = y                                           # CONL inner residual = [LS tracking; 10 contact barrier margins; 40 pin rows]
     am.cost_r_in_psi_expr = r_psi
     am.cost_psi_expr = psi
     am.cost_y_expr_e = y_e
-    am.con_h_expr_0 = con_h                                      # stage 0 too: u_0 must produce contact-consistent accel
-    am.con_h_expr = con_h                                        # stages 1..N-1: ZeroAccel (stance) / SwingZ (swing)
+    # NO con_h: the contact equalities are absorbed by the projector.
 
     ocp = AcadosOcp()
     ocp.model = am
@@ -100,16 +101,6 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
     ocp.cost.yref = yref                                         # psi(y - yref); yref=0 (LS rows are deviations, margins direct)
     ocp.cost.yref_e = yref_e
 
-    # Contact EQUALITIES as con_h, toggled per node via bounds (mpc_wb sets lh/uh each tick): a STANCE foot
-    # activates ZeroAccel (6 rows -> [0,0]); a SWING foot activates SwingZ (1 row -> [0,0]); inactive rows
-    # are [-INFTY,+INFTY]. Raw (ungated) expr keeps the Jacobian FULL RANK (the prior gate-to-zero left
-    # zero rows -> singular KKT -> MINSTEP). Default here = all-inactive; the runtime bounds make it bite.
-    ocp.constraints.lh_0 = lh_def.copy(); ocp.constraints.uh_0 = uh_def.copy()
-    ocp.constraints.lh = lh_def.copy(); ocp.constraints.uh = uh_def.copy()
-    # SWING-foot ZeroWrench as input box bounds on u[0:12]=[W_l,W_r]: swing -> 0, stance -> free (per node).
-    ocp.constraints.idxbu = np.arange(NBU)
-    ocp.constraints.lbu = -ACADOS_INFTY * np.ones(NBU)
-    ocp.constraints.ubu = ACADOS_INFTY * np.ones(NBU)
     # joint-position box limits on q_joints (state idx 6..32)
     ocp.constraints.idxbx = np.arange(6, 33)
     ocp.constraints.lbx = cfg.joint_lower.copy()
@@ -118,6 +109,7 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
     x0 = model.nominal_state()
     ocp.constraints.x0 = x0
     pv0 = np.zeros(N_PARAM_WB); pv0[P_DT] = cfg.dt
+    pv0[P_PROJ_P] = np.eye(cfg.nu).flatten(order="F")          # default = identity projector (u_phys=u)
     ocp.parameter_values = pv0
 
     # Solver regime = faithful port of arXiv:2605.04607 (Stark/DFKI) Appendix B — a WORKING acados biped.
@@ -133,8 +125,8 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
     so.integrator_type = "DISCRETE" if discrete else "ERK"
     so.sim_method_num_stages = 4                                 # RK4 (ERK only); kept over paper's fwd-Euler
     so.sim_method_num_steps = 1
-    so.levenberg_marquardt = 1e-3                               # base LM (paper: adaptive LM)
-    so.regularize_method = "PROJECT"                            # projection-based Hessian reg (paper App.B)
+    so.levenberg_marquardt = 0.0                               # pin replaces uniform LM (axis-3 fix)
+    so.regularize_method = "NO_REGULARIZE"                     # GN Hessian PD via the ker(P) pin
     so.qp_solver_iter_max = 30                                  # FAITHFUL to OCS2 HPIPM default iter_max=30
     so.nlp_solver_max_iter = 12                                # CEILING, baked ONCE for solver memory sizing. The ACTUAL
     # max_iter is set at RUNTIME via options_set in WholeBodyMPC (acados can LOWER it), so changing SQP iters NEVER triggers
@@ -162,7 +154,6 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
     bundle = WBBundle(
         model=model,
         cost_fun=cs.Function("resid_y", [x, u, p], [y]),
-        con_h_fun=cs.Function("con_h", [x, u, p], [con_h]),
     )
     return ocp, bundle
 
