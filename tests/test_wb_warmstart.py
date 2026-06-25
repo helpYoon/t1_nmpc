@@ -14,9 +14,11 @@ def _distinct():
 
 
 def test_integer_shift_is_shift_by_one():
-    # one node elapsed = the oracle case the probe validated -> x_guess[j] == x_prev[j+1], last held
+    # one node elapsed (grid shifted forward by dt) -> x_guess[j] == x_prev[j+1], last held
     x, u = _distinct()
-    xg, ug = shift_warmstart(x, u, 0.0, dt, cfg)
+    nt_prev = np.arange(N + 1) * dt
+    nt_now = nt_prev + dt
+    xg, ug = shift_warmstart(x, u, nt_prev, nt_now, cfg)
     for j in range(N):
         np.testing.assert_allclose(xg[j], x[j + 1], atol=1e-10)
     np.testing.assert_allclose(xg[N], x[N], atol=1e-10)
@@ -26,11 +28,13 @@ def test_integer_shift_is_shift_by_one():
 
 
 def test_fractional_shift_interpolates():
-    # half a node elapsed (the real-loop regime) -> midpoint of consecutive nodes
+    # half a node elapsed (grid shifted forward by 0.5*dt) -> midpoint of consecutive nodes
     x, u = _distinct()
-    xg, ug = shift_warmstart(x, u, 0.0, 0.5 * dt, cfg)
+    nt_prev = np.arange(N + 1) * dt
+    nt_now = nt_prev + 0.5 * dt
+    xg, ug = shift_warmstart(x, u, nt_prev, nt_now, cfg)
     for j in range(N):
-        np.testing.assert_allclose(xg[j], 0.5 * (x[j] + x[j + 1]))
+        np.testing.assert_allclose(xg[j], 0.5 * (x[j] + x[j + 1]), atol=1e-10)
     np.testing.assert_allclose(xg[N], x[N], atol=1e-10)
 
 

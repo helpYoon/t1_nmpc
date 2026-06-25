@@ -55,11 +55,6 @@ def shift_warmstart(x_prev, u_prev, node_times_prev, node_times_now, cfg):
     """
     tp = np.asarray(node_times_prev, float)
     tn = np.asarray(node_times_now, float)
-    # Scalar backward-compatibility: expand to uniform node-time vectors
-    if tp.ndim == 0:
-        tp = tp + np.arange(cfg.N + 1) * cfg.dt
-    if tn.ndim == 0:
-        tn = tn + np.arange(cfg.N + 1) * cfg.dt
     xg = np.empty((cfg.N + 1, cfg.nx))
     for j in range(cfg.nx):
         xg[:, j] = np.interp(tn, tp, x_prev[:, j])          # np.interp holds-last past tp[-1]
