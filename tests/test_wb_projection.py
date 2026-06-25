@@ -49,3 +49,88 @@ def test_projector_identities_single_support():
     lin = r0 + D @ (u_phys - u0)
     assert np.linalg.norm(lin) < 1e-9
     assert np.allclose(u_phys[6:12], 0.0, atol=1e-10)         # right (swing) wrench == 0
+
+
+def _null_space(D):
+    """Orthonormal basis of ker(D) via SVD (numpy-only; matches scipy.linalg.null_space)."""
+    _u, s, vh = np.linalg.svd(D)
+    tol = (np.amax(s) if s.size else 0.0) * np.finfo(s.dtype).eps * max(D.shape)
+    return vh[np.sum(s > tol):].conj().T
+
+
+def _solve_reduced_qp(D, r0, R, u0, u_ref):
+    """OCS2-style reduced QP at dx=0: u_phys = u0 - D⁺ r0 + Z v, minimize 0.5 (u_phys-u_ref)' R (u_phys-u_ref)."""
+    Dp = np.linalg.pinv(D)
+    Z = _null_space(D)                                           # nu × (nu - rank(D))
+    base = u0 - Dp @ r0                                          # particular solution
+    a = base - u_ref
+    Rz = Z.T @ R @ Z
+    v = -np.linalg.solve(Rz, Z.T @ R @ a)
+    return base + Z @ v
+
+
+def _solve_full_qp(P, Q, u_p, x0, R, u_ref, rho):
+    """Full-nu QP at dx=0: min over raw u of 0.5(u_phys-u_ref)'R(u_phys-u_ref) + 0.5 rho ||(I-P)(u-u_ref)||^2."""
+    c = Q @ x0 + u_p                                             # u_phys = P u + c
+    ImP = np.eye(P.shape[0]) - P
+    H = P.T @ R @ P + rho * ImP                                  # (I-P) sym-idempotent -> (I-P)'(I-P)=(I-P)
+    b = -P.T @ R @ (c - u_ref) + rho * ImP @ u_ref
+    u = np.linalg.solve(H, b)
+    return P @ u + c
+
+
+def test_full_nu_projector_matches_ocs2_reduced_qp():
+    cfg = make_wb_config(); m = WBModel(cfg)
+    funcs = projection_wb.build_projector_funcs(cfg, m)
+    R = np.diag(np.asarray(cfg.R, dtype=np.float64))
+    rng = np.random.default_rng(1); u_ref = rng.standard_normal(40)
+    for lf, rf in [(1, 1), (1, 0), (0, 1)]:                      # double + each single support
+        x0 = m.nominal_state(); u0 = np.zeros(40)
+        u0[2] = u0[8] = m.total_mass() * 9.81 / 2.0
+        p = _p_vec(cfg, lf, rf)
+        D = np.asarray(funcs[1](x0, u0, p)); r0 = np.asarray(funcs[0](x0, u0, p)).ravel()
+        P, Q, u_p = projection_wb.compute_projector(x0, u0, p, funcs, cfg)
+        u_red = _solve_reduced_qp(D, r0, R, u0, u_ref)
+        u_full = _solve_full_qp(P, Q, u_p, x0, R, u_ref, rho=1.0)
+        # tol 5e-8: u_phys is ρ-independent analytically; the residual is float64 round-off in the
+        # cond(H)=ρ/R_min ≈ 1e6 pin direction (a naive-solve artifact, not a u_phys property).
+        assert np.linalg.norm(u_full - u_red) <= 5e-8, f"mode {lf,rf}: {np.linalg.norm(u_full-u_red)}"
+
+
+def test_pin_rho_does_not_bias_u_phys():
+    cfg = make_wb_config(); m = WBModel(cfg)
+    funcs = projection_wb.build_projector_funcs(cfg, m)
+    R = np.diag(np.asarray(cfg.R, dtype=np.float64))
+    rng = np.random.default_rng(2); u_ref = rng.standard_normal(40)
+    x0 = m.nominal_state(); u0 = np.zeros(40); u0[2] = u0[8] = m.total_mass() * 9.81 / 2.0
+    p = _p_vec(cfg, lf=1, rf=0)
+    P, Q, u_p = projection_wb.compute_projector(x0, u0, p, funcs, cfg)
+    base = _solve_full_qp(P, Q, u_p, x0, R, u_ref, rho=1.0)
+    # sweep capped at ρ<=1.0: larger ρ only worsens the naive np.linalg.solve conditioning (cond=ρ/R_min);
+    # u_phys is analytically ρ-independent, so invariance across these decades is the real check.
+    for rho in (1e-3, 1e-2, 1e-1, 1.0):
+        assert np.linalg.norm(_solve_full_qp(P, Q, u_p, x0, R, u_ref, rho) - base) <= 5e-8
+
+
+def test_full_nu_matches_ocs2_reduced_with_dx():
+    """Equivalence at x != x0 (dx != 0) -- exercises Q = -D⁺C (untested when dx=0)."""
+    cfg = make_wb_config(); m = WBModel(cfg)
+    funcs = projection_wb.build_projector_funcs(cfg, m)
+    R = np.diag(np.asarray(cfg.R, dtype=np.float64))
+    rng = np.random.default_rng(3); u_ref = rng.standard_normal(40)
+    x0 = m.nominal_state(); u0 = np.zeros(40); u0[2] = u0[8] = m.total_mass() * 9.81 / 2.0
+    dx = np.zeros(cfg.nx); dx[3] = 0.05; dx[20] = 0.1            # perturb base-yaw + a joint
+    x = x0 + dx
+    for lf, rf in [(1, 1), (1, 0)]:
+        p = _p_vec(cfg, lf, rf)
+        D = np.asarray(funcs[1](x0, u0, p)); r0 = np.asarray(funcs[0](x0, u0, p)).ravel()
+        C = np.asarray(funcs[2](x0, u0, p))
+        P, Q, u_p = projection_wb.compute_projector(x0, u0, p, funcs, cfg)
+        Dp = np.linalg.pinv(D); Z = _null_space(D)
+        base = u0 - Dp @ (r0 + C @ dx); a = base - u_ref        # OCS2 reduced offset at dx
+        Rz = Z.T @ R @ Z; v = -np.linalg.solve(Rz, Z.T @ R @ a)
+        u_red = base + Z @ v
+        c = Q @ x + u_p; ImP = np.eye(40) - P                   # full-nu at x = x0 + dx
+        H = P.T @ R @ P + 1.0 * ImP; b = -P.T @ R @ (c - u_ref) + 1.0 * ImP @ u_ref
+        u = np.linalg.solve(H, b); u_full = P @ u + c
+        assert np.linalg.norm(u_full - u_red) <= 5e-8, f"dx mode {lf,rf}: {np.linalg.norm(u_full-u_red)}"
