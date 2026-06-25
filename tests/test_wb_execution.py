@@ -35,3 +35,19 @@ def test_tau_ff_from_lookahead_sample_not_node0():
     # q_des/qd_des and the reported wrenches come from the same look-ahead sample
     np.testing.assert_allclose(jc.q_des, xq[6:33], atol=1e-12)
     np.testing.assert_allclose(jc.wrench_l, uq[0:6], atol=1e-12)
+
+
+def test_tau_ff_uses_u_phys_traj_when_present():
+    cfg = make_wb_config(); m = WBModel(cfg)
+    N = cfg.N
+    x0 = m.nominal_state()
+    u_raw = np.zeros(40); u_raw[2] = u_raw[8] = m.total_mass() * 9.81 / 2.0
+    u_phys = u_raw.copy(); u_phys[12:39] = 0.2                      # physical input differs from raw
+    x_traj = np.tile(x0, (N + 1, 1))
+    u_traj = np.tile(u_raw, (N, 1))
+    u_phys_traj = np.tile(u_phys, (N, 1))
+    r = _Result(x_traj, u_traj, node_times=np.arange(N + 1) * cfg.dt)
+    r.u_phys_traj = u_phys_traj
+    jc = to_joint_command_wb(r, cfg, m, sample_ahead_s=0.005)
+    np.testing.assert_allclose(jc.tau_ff, m.joint_torque(x0, u_phys), atol=1e-9)
+    assert not np.allclose(jc.tau_ff, m.joint_torque(x0, u_raw), atol=1e-6)

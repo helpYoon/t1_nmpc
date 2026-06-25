@@ -25,7 +25,8 @@ def to_joint_command_wb(result, cfg, model, sample_ahead_s: float = 0.005) -> Jo
     nt = result.node_times if getattr(result, "node_times", None) is not None else (np.arange(cfg.N + 1) * cfg.dt)
     tq = nt[0] + sample_ahead_s
     xq = np.array([np.interp(tq, nt, result.x_traj[:, j]) for j in range(result.x_traj.shape[1])])
-    uq = np.array([np.interp(tq, nt[:cfg.N], result.u_traj[:, j]) for j in range(result.u_traj.shape[1])])
+    u_src = result.u_phys_traj if getattr(result, "u_phys_traj", None) is not None else result.u_traj
+    uq = np.array([np.interp(tq, nt[:cfg.N], u_src[:, j]) for j in range(u_src.shape[1])])
     tau_ff = model.joint_torque(xq, uq)
     return JointCommand(
         q_des=np.ascontiguousarray(xq[_QJ], dtype=np.float64),

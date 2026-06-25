@@ -157,7 +157,8 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
     x0 = wb_state_estimate(rt)
     mpc.reset(x0)
     res = mpc.step(x0, rt.t)
-    x_plan, u_plan, t_solve = res.x_traj, res.u_traj, rt.t
+    x_plan, t_solve = res.x_traj, rt.t
+    u_plan = res.u_phys_traj if getattr(res, "u_phys_traj", None) is not None else res.u_traj
     node_times_plan = res.node_times if getattr(res, "node_times", None) is not None else wb_cfg.dt
 
     n_phys = int(round(duration_s * ccfg.physics_hz))
@@ -227,7 +228,8 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
             res = mpc.step(x_meas, rt.t)             # gait clock = rt.t -> SLOW_WALK advances
             if res.status not in (0, 2):
                 n_fail += 1
-            x_plan, u_plan, t_solve = res.x_traj, res.u_traj, rt.t
+            x_plan, t_solve = res.x_traj, rt.t
+            u_plan = res.u_phys_traj if getattr(res, "u_phys_traj", None) is not None else res.u_traj
             node_times_plan = res.node_times if getattr(res, "node_times", None) is not None else wb_cfg.dt
             try:
                 solve_tot.append(float(mpc.solver.get_stats("time_tot")) * 1e3)

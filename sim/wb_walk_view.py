@@ -77,7 +77,8 @@ def run_view(vx: float = 0.3, duration_s: float = 10.0, speed: float = 1.0,
     mpc.set_command([vx, 0.0, 0.0, 0.0, 0.0])
     x0 = wb_state_estimate(rt); mpc.reset(x0)
     res = mpc.step(x0, rt.t)
-    x_plan, u_plan, t_solve = res.x_traj, res.u_traj, rt.t
+    x_plan, t_solve = res.x_traj, rt.t
+    u_plan = res.u_phys_traj if getattr(res, "u_phys_traj", None) is not None else res.u_traj
 
     n_phys = int(round(duration_s * ccfg.physics_hz))
     cdecim, mdecim = rt.control_decim, rt.mpc_decim
@@ -112,7 +113,8 @@ def run_view(vx: float = 0.3, duration_s: float = 10.0, speed: float = 1.0,
             if k % mdecim == 0 and k > 0:
                 x_meas = wb_state_estimate(rt)
                 res = mpc.step(x_meas, rt.t)
-                x_plan, u_plan, t_solve = res.x_traj, res.u_traj, rt.t
+                x_plan, t_solve = res.x_traj, rt.t
+                u_plan = res.u_phys_traj if getattr(res, "u_phys_traj", None) is not None else res.u_traj
             if k % cdecim == 0:
                 q_pin, v_pin = rt._pin_q_v()
                 q_meas = q_pin[8:35]; qd_meas = v_pin[8:35]
