@@ -43,30 +43,32 @@ def build_node_params(x_meas, node_times, comm_filt, gait, cfg, model) -> np.nda
     return P
 
 
-def shift_warmstart(x_prev, u_prev, t_prev, t_now, cfg):
-    """trajectorySpread warm-start: time-shift the previous primal forward by (t_now - t_prev).
+def shift_warmstart(x_prev, u_prev, node_times_prev, node_times_now, cfg):
+    """Interpolate the previous primal (defined on node_times_prev) onto node_times_now by absolute
+    time; hold-last past the previous horizon end. Generalizes the old uniform time-shift to the
+    D4 event-aligned (non-uniform, per-tick-varying) grid.
 
-    New node j sits at absolute time t_now + j*dt; sample the previous solution (anchored at t_prev,
-    nodes at t_prev + i*dt) there by linear interpolation, holding the last node past the horizon end.
-    For t_now - t_prev == dt this is the integer shift x_guess[j] = x_prev[j+1] the oracle proved fixes
-    the ratchet (sim/wb_walk_warmstart_probe.py); the real loop solves faster than dt -> fractional.
-    ponytail: interp-only. OCS2 also CLAMPS across a contact switch (no blend); the one-node
-    stance/swing blend here is just a guess the RTI absorbs -- add the clamp only if a gate shows it.
+    node_times_prev / node_times_now: 1-D arrays of length N+1 with absolute wall-clock times of
+    each state node.  Accepts scalar floats for backward-compatibility: scalars t_prev, t_now are
+    expanded to uniform grids t_prev + k*dt and t_now + k*dt (so existing callers with integer /
+    fractional dt shifts continue to pass).
     """
-    frac = (t_now - t_prev) / cfg.dt
-
-    def _shift(traj):
-        last = len(traj) - 1
-        out = np.empty_like(traj)
-        for j in range(len(traj)):
-            s = j + frac
-            i0 = min(int(np.floor(s)), last)
-            i1 = min(i0 + 1, last)
-            w = float(np.clip(s - i0, 0.0, 1.0))
-            out[j] = (1.0 - w) * traj[i0] + w * traj[i1]
-        return out
-
-    return _shift(x_prev), _shift(u_prev)
+    tp = np.asarray(node_times_prev, float)
+    tn = np.asarray(node_times_now, float)
+    # Scalar backward-compatibility: expand to uniform node-time vectors
+    if tp.ndim == 0:
+        tp = tp + np.arange(cfg.N + 1) * cfg.dt
+    if tn.ndim == 0:
+        tn = tn + np.arange(cfg.N + 1) * cfg.dt
+    xg = np.empty((cfg.N + 1, cfg.nx))
+    for j in range(cfg.nx):
+        xg[:, j] = np.interp(tn, tp, x_prev[:, j])          # np.interp holds-last past tp[-1]
+    # u defined on intervals: sample at the START of each new interval from prev interval-starts
+    up_t = tp[:cfg.N]
+    ug = np.empty((cfg.N, cfg.nu))
+    for j in range(cfg.nu):
+        ug[:, j] = np.interp(tn[:cfg.N], up_t, u_prev[:, j])
+    return xg, ug
 
 
 class WholeBodyMPC:
@@ -115,7 +117,7 @@ class WholeBodyMPC:
         P = build_node_params(x_meas, node_times, self._comm_filt, self._gait, cfg, self.model)
         # Warm-start (where single-RTI linearizes) = the shifted previous solution (trajectorySpread), or x_meas at t0.
         if self._x_prev is not None:
-            xg, ug = shift_warmstart(self._x_prev, self._u_prev, self._t_prev, t, cfg)
+            xg, ug = shift_warmstart(self._x_prev, self._u_prev, self._node_times_prev, node_times, cfg)
         else:
             u0 = np.zeros(cfg.nu); u0[2] = u0[8] = self.model.total_mass() * 9.81 / 2.0
             xg = np.tile(x_meas, (cfg.N + 1, 1)); ug = np.tile(u0, (cfg.N, 1))
