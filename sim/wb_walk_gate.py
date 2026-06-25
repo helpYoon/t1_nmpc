@@ -79,9 +79,9 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
                 pass
 
             # Premature-contact instrument: detect swing->stance at this MPC tick.
-            contact_now = list(mpc._gait.contact_flags(rt.t))  # [left_stance, right_stance]
+            contact_now = [bool(c) for c in mpc._gait.contact_flags(rt.t)]  # [left_stance, right_stance], coerced to Python bool
             for i in range(2):
-                if _contact_prev[i] is False and contact_now[i] is True:
+                if _contact_prev[i] is not None and not _contact_prev[i] and contact_now[i]:
                     # Foot i just transitioned swing->stance; measure its world-z from MuJoCo.
                     foot_z = float(rt.mj_data.xpos[_foot_bids[i], 2])
                     _min_foot_z_at_activation = min(_min_foot_z_at_activation, foot_z)
