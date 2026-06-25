@@ -77,6 +77,7 @@ class WholeBodyMPC:
         self._x_nom = model.nominal_state()
         self._x_prev = self._u_prev = None; self._t_prev = None   # warm-start carry (trajectorySpread)
         self._node_times_prev = None
+        self._last_warmstart_x = self._last_warmstart_u = None     # last linearization point (diagnostics)
 
     def set_command(self, cmd) -> None:
         self._cmd = np.asarray(cmd, dtype=np.float64).copy()
@@ -114,6 +115,7 @@ class WholeBodyMPC:
         else:
             u0 = np.zeros(cfg.nu); u0[2] = u0[8] = self.model.total_mass() * 9.81 / 2.0
             xg = np.tile(x_meas, (cfg.N + 1, 1)); ug = np.tile(u0, (cfg.N, 1))
+        self._last_warmstart_x, self._last_warmstart_u = xg, ug   # for the Newton-step-norm diagnostic
         for k in range(cfg.N + 1):
             self.solver.set(k, "x", xg[k])
         for k in range(cfg.N):
