@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 
+import mujoco
 import numpy as np
 
 from t1_nmpc.config import make_config
@@ -24,6 +25,9 @@ from sim.wb_stand_gate import wb_state_estimate, _wb_reset, _sample_plan, _HEAD_
 from sim._sim_util import tilt_from_quat_wxyz
 
 SLOW_WALK_PERIOD = 1.7
+
+# MuJoCo foot-link body names (for the premature-contact instrument).
+_FOOT_BODY_NAMES = ("left_foot_link", "right_foot_link")
 
 
 def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float = 0.005,
@@ -38,6 +42,12 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
     else:
         wb_cfg, wb_model = mpc.cfg, mpc.model
 
+    # Resolve MuJoCo foot body IDs for the premature-contact instrument.
+    _foot_bids = tuple(
+        mujoco.mj_name2id(rt.mj_model, mujoco.mjtObj.mjOBJ_BODY, nm)
+        for nm in _FOOT_BODY_NAMES
+    )
+
     _wb_reset(rt, wb_cfg)
     mpc.set_command(cmd)                             # speed>1e-3 -> SLOW_WALK gait
     x0 = wb_state_estimate(rt)
@@ -51,6 +61,11 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
     tilts, base_z, base_x, base_y, solve_tot = [], [], [], [], []
     kp, kd = wb_cfg.kp, wb_cfg.kd
 
+    # Premature-contact instrument: track minimum measured foot-z at each swing->stance transition.
+    # contact_prev[i] = True when foot i was in STANCE on the previous MPC tick; None = uninitialized.
+    _contact_prev = [None, None]
+    _min_foot_z_at_activation = float("inf")   # updated at each swing->stance transition
+
     for k in range(n_phys):
         if k % mdecim == 0 and k > 0:
             x_meas = wb_state_estimate(rt)
@@ -62,6 +77,16 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
                 solve_tot.append(float(mpc.solver.get_stats("time_tot")) * 1e3)
             except Exception:
                 pass
+
+            # Premature-contact instrument: detect swing->stance at this MPC tick.
+            contact_now = list(mpc._gait.contact_flags(rt.t))  # [left_stance, right_stance]
+            for i in range(2):
+                if _contact_prev[i] is False and contact_now[i] is True:
+                    # Foot i just transitioned swing->stance; measure its world-z from MuJoCo.
+                    foot_z = float(rt.mj_data.xpos[_foot_bids[i], 2])
+                    _min_foot_z_at_activation = min(_min_foot_z_at_activation, foot_z)
+                _contact_prev[i] = contact_now[i]
+
         if k % cdecim == 0:
             q_pin, v_pin = rt._pin_q_v()
             q_meas = q_pin[8:35]; qd_meas = v_pin[8:35]
@@ -83,6 +108,9 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
     mean_vx = (base_x[-1] - base_x[0]) / duration_s
     lateral_pkpk = float(max(base_y) - min(base_y))
     n_steps = int(duration_s / SLOW_WALK_PERIOD * 2) if n_fail == 0 else 0   # 2 steps/cycle
+    # min_foot_z_at_stance_activation: ~0 = foot on ground when STANCE engages (good),
+    # clearly positive = STANCE fired while the foot was still in the air (premature-contact stomp).
+    min_foot_z = None if _min_foot_z_at_activation == float("inf") else round(_min_foot_z_at_activation, 4)
     passed = bool(peak_tilt < 0.2 and final_z > 0.85 * nominal and n_fail == 0
                   and mean_vx > 0.20 and lateral_pkpk < 0.10)
     return {
@@ -90,6 +118,7 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
         "lateral_pkpk_m": round(lateral_pkpk, 4), "n_steps": n_steps, "n_fail": n_fail,
         "final_base_z": round(final_z, 4),
         "median_acados_tot_ms": round(float(np.median(solve_tot)), 2) if solve_tot else None,
+        "min_foot_z_at_stance_activation": min_foot_z,
         "passed": passed,
     }
 
