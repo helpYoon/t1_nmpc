@@ -49,10 +49,10 @@ def run_loop(transport, mpc, *, duration_s, control_hz, cores=(0, 1), sample_ahe
         while not stop.is_set():
             snap = state_cell[0]                        # atomic ref read (fresh array)
             res = mpc.step(snap, transport.now())
-            if res.status not in (0, 2):
+            if res.status != 0:
                 n_fail += 1
             plan_cell[0] = (res, transport.now())       # single atomic STORE of a fresh tuple
-            tot_ms.append(float(mpc.solver.get_stats("time_tot")) * 1e3)
+            tot_ms.append(float(mpc.last_solve_s) * 1e3)
 
     th = threading.Thread(target=mpc_thread, daemon=True); th.start()
 

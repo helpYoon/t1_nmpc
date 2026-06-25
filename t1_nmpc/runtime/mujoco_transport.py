@@ -8,7 +8,7 @@ from ..config import JointCommand, make_config
 from ..model import load_model, T1_URDF_PATH
 from ..wb.config_wb import WBConfig
 from sim.mujoco_runtime import MujocoRuntime
-from sim.wb_stand_gate import wb_state_estimate, _wb_reset
+from sim.wb_state import wb_state_estimate, wb_reset as _wb_reset
 
 _HEAD_KP, _HEAD_KD = 20.0, 0.5
 
