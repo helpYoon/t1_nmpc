@@ -8,7 +8,6 @@ is M1). Swing/arm-swing/foot-collision are M1 (skipped here)."""
 from __future__ import annotations
 
 import numpy as np
-import pinocchio as pin
 import crocoddyl
 
 _BIG = 1e3  # effective +inf for one-sided state bounds
@@ -18,6 +17,7 @@ def _control_weights(nv: int, nc: int, R: np.ndarray) -> np.ndarray:
     """Map config_wb.R [W_l(6),W_r(6),qdd(27),vdot_s(1)] to crocoddyl control
     [a(nv); forces(nc)] weights. a[0:6]=base accel (constrained) -> tiny; a[6:33]=qdd
     -> R[12:39]; forces ordered [left, right] -> R[0:6], R[6:12]."""
+    assert nv == 33, f"nv={nv}"  # qdd/force slices assume nv==33
     w = np.empty(nv + nc)
     w[0:6] = 1e-6
     w[6:nv] = R[12:39]
@@ -33,7 +33,7 @@ def build_costs(state, actuation, nu, x_ref, com_ref, stance_fids, cfg):
     nc = 6 * len(stance_fids)
     costs = crocoddyl.CostModelSum(state, nu)
 
-    # 1. state tracking/regularization (weights = config_wb.Q diagonal, 68->66)
+    # 1. state tracking/regularization (weights = config_wb.Q diagonal, 67->66)
     xreg = crocoddyl.ResidualModelState(state, np.asarray(x_ref, float), nu)
     xact = crocoddyl.ActivationModelWeightedQuad(np.asarray(cfg.Q[:66], float))
     costs.addCost("xreg", crocoddyl.CostModelResidual(state, xact, xreg), 1.0)

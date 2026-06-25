@@ -3,6 +3,7 @@ import numpy as np, pinocchio as pin, crocoddyl
 from t1_nmpc.wb.config_wb import make_wb_config
 from t1_nmpc.wb.model_wb import WBModel
 from t1_nmpc.wb import croco_costs
+from t1_nmpc.wb.croco_costs import _control_weights
 
 def _ctx():
     cfg = make_wb_config(); wb = WBModel(cfg)
@@ -20,8 +21,20 @@ def test_build_costs_double_support_dims():
                                     list(wb.contact_fids), cfg)
     assert costs.nu == nu
     names = set(costs.costs.todict().keys())
-    assert {"xreg", "ureg", "tau_lim", "joint_lim"} <= names
-    assert any(n.startswith("wrenchcone_") for n in names)   # one per stance foot
+    assert {"xreg", "ureg", "tau_lim", "joint_lim", "com"} <= names
+    assert sum(n.startswith("wrenchcone_") for n in names) == len(list(wb.contact_fids))
+
+def test_ureg_activation_weights_match_control_weights():
+    cfg, wb, state, act = _ctx()
+    nv = wb.model.nv
+    nc = 12  # double-support
+    nu = nv + nc
+    x_ref = np.zeros(state.nx)
+    costs = croco_costs.build_costs(state, act, nu, x_ref, np.zeros(3),
+                                    list(wb.contact_fids), cfg)
+    activation = costs.costs["ureg"].cost.activation
+    expected = _control_weights(nv, nc, np.asarray(cfg.R, float))
+    assert np.allclose(np.asarray(activation.weights), expected)
 
 def test_state_weight_comes_from_config_Q():
     cfg, wb, state, act = _ctx()
