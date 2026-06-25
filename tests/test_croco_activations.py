@@ -19,3 +19,20 @@ def test_relaxed_barrier_multidim():
     rb.calc(d, np.array([1.0, 0.5, -0.1])); assert np.isfinite(d.a_value)
     rb.calcDiff(d, np.array([1.0, 0.5, -0.1]))
     assert np.asarray(d.Ar).shape[0] == 3 and np.asarray(d.Arr).shape == (3, 3)
+    # violated element (index 2, h=-0.1 < delta=0.03) must have negative gradient
+    assert np.asarray(d.Ar).ravel()[2] < 0
+
+def test_relaxed_barrier_continuous_at_delta():
+    """C2 continuity: value must be continuous across h=delta (no jump)."""
+    rb = RelaxedBarrier(1, mu=0.2, delta=5.0); d = rb.createData()
+    rb.calc(d, np.array([5.0 - 1e-7])); v_below = d.a_value
+    rb.calc(d, np.array([5.0 + 1e-7])); v_above = d.a_value
+    assert abs(v_below - v_above) < 1e-4
+
+def test_relaxed_barrier_monotone():
+    """Penalty must rise as h decreases (constraint approached / violated)."""
+    rb = RelaxedBarrier(1, mu=0.2, delta=5.0); d = rb.createData()
+    rb.calc(d, np.array([10.0])); v_10 = d.a_value
+    rb.calc(d, np.array([1.0]));  v_1  = d.a_value
+    rb.calc(d, np.array([0.1]));  v_01 = d.a_value
+    assert v_01 > v_1 > v_10

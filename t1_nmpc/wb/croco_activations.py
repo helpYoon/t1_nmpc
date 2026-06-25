@@ -6,8 +6,8 @@ import crocoddyl
 
 class RelaxedBarrier(crocoddyl.ActivationModelAbstract):
     """OCS2 RelaxedBarrierPenalty: per element, h>=0 desired.
-    value = -mu*log(h)               for h > delta
-          = mu*(0.5*((h-2d)/d)^2 - log(d))   for h <= delta   (quadratic continuation, C1 at h=delta).
+    value = -mu*log(h)                       for h > delta
+          = mu*(0.5*((h-2d)/d)^2 - 0.5 - log(d))   for h <= delta   (quadratic continuation, C2 at h=delta).
     Penalizes constraint VIOLATION (h small/negative); gradient pushes h up."""
     def __init__(self, nr, mu, delta):
         crocoddyl.ActivationModelAbstract.__init__(self, nr)
@@ -16,7 +16,7 @@ class RelaxedBarrier(crocoddyl.ActivationModelAbstract):
     def calc(self, data, r):
         h = np.asarray(r).ravel(); mu, d = self.mu, self.delta
         v = np.where(h > d, -mu * np.log(np.maximum(h, 1e-12)),
-                     mu * (0.5 * ((h - 2 * d) / d) ** 2 - np.log(d)))
+                     mu * (0.5 * ((h - 2 * d) / d) ** 2 - 0.5 - np.log(d)))
         data.a_value = float(np.sum(v))
 
     def calcDiff(self, data, r):
