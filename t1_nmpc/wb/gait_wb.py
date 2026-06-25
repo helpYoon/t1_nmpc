@@ -111,6 +111,20 @@ class Gait:
         return _splinecpg(t, t0, 1.0, scaling * _IMPACT_LIFTOFF_VEL,
                           t1, 1.0, scaling * _IMPACT_TOUCHDOWN_VEL, _IMPACT_MIDPOINT)[0]
 
+    def switch_times_in(self, t0: float, t1: float) -> list[float]:
+        """Absolute contact-switch times in the open interval (t0, t1). A switch occurs at phase
+        0.0 and at each event_phase, tiled by `duration` (faithful to OCS2 GaitSchedule switch times)."""
+        switch_phases = np.unique(np.concatenate(([0.0], np.asarray(self.event_phases, float))))
+        out: list[float] = []
+        j0 = int(np.floor(t0 / self.duration))
+        j1 = int(np.ceil(t1 / self.duration))
+        for j in range(j0, j1 + 1):
+            for sp in switch_phases:
+                s = (j + sp) * self.duration
+                if t0 < s < t1:
+                    out.append(float(s))
+        return sorted(out)
+
 
 def _gait_from_template(mode_sequence, switching_times) -> Gait:
     """loadGaitSchedule (GaitSchedule.cpp:187-196): duration=last switch; event_phases =

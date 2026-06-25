@@ -32,3 +32,22 @@ def test_mode_at_and_contact_flags():
 def test_phase_boundary_is_closed_open():
     # at an exact event phase the mode advances to the next (searchsorted side='right')
     assert SLOW_WALK.mode_at(0.65) == STANCE     # 0.65 is the LF->STANCE switch
+
+
+def test_switch_times_in_matches_mode_changes():
+    g = SLOW_WALK  # event_phases from [0.0, 0.65, 0.85, 1.5, 1.7], duration 1.7
+    t0, t1 = 0.2, 0.2 + 1.085
+    sw = g.switch_times_in(t0, t1)
+    # strictly increasing, inside the open window
+    assert sw == sorted(sw) and len(set(sw)) == len(sw)
+    assert all(t0 < s < t1 for s in sw)
+    # each returned time is where contact_flags actually changes
+    for s in sw:
+        before = g.contact_flags(s - 1e-4)
+        after = g.contact_flags(s + 1e-4)
+        assert before != after
+    # and no missed switch: sampling densely finds no change outside the returned set
+    ts = np.linspace(t0 + 1e-4, t1 - 1e-4, 4000)
+    flags = [g.contact_flags(t) for t in ts]
+    changes = sum(flags[i] != flags[i - 1] for i in range(1, len(ts)))
+    assert changes == len(sw)
