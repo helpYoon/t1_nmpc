@@ -14,7 +14,6 @@ import numpy as np
 
 from .config_wb import WBConfig
 from .cost_wb import N_PARAM_WB, P_XREF, P_UREF, P_CONTACT, P_SWINGZ, P_IMPACT, P_DT
-from .constraints_wb import stage_constraint_bounds, stage_wrench_bounds
 from .gait_wb import SLOW_WALK, STANCE_GAIT
 from .grid_wb import event_aligned_grid
 from .reference_wb import build_reference, filter_command
@@ -22,9 +21,12 @@ from .ocp_wb import make_ocp, build_solver
 from ..mpc_result import MPCResult
 
 
-def build_node_params(x_meas, node_times, comm_filt, gait, cfg, model) -> np.ndarray:
+def build_node_params(x_meas, node_times, comm_filt, gait, cfg, model, xg, ug, proj_funcs) -> np.ndarray:
     """Per-node acados parameter matrix (N+1, N_PARAM_WB) on the given (possibly non-uniform)
-    node_times: folded reference + contact flags + swing-Z + impact + per-stage dt (P_DT)."""
+    node_times: folded reference + contact flags + swing-Z + impact + per-stage dt (P_DT)
+    + per-node affine projector (P_PROJ_P/Q/UP) linearized at the warm-start (xg, ug both N+1 rows)."""
+    from .cost_wb import P_PROJ_P, P_PROJ_Q, P_PROJ_UP
+    from .projection_wb import compute_projector
     node_times = np.asarray(node_times, float)
     x_ref, u_ref = build_reference(x_meas, comm_filt, gait, node_times[0], node_times, cfg, model)
     P = np.zeros((cfg.N + 1, N_PARAM_WB))
@@ -40,6 +42,12 @@ def build_node_params(x_meas, node_times, comm_filt, gait, cfg, model) -> np.nda
     dts = np.diff(node_times)
     P[:cfg.N, P_DT] = dts
     P[cfg.N, P_DT] = dts[-1]                  # terminal slot unused by dynamics
+    # projector per node, linearized at the warm-start (xg,ug both N+1 rows) -- the SAME point acados linearizes at.
+    for k in range(cfg.N + 1):
+        Pk, Qk, upk = compute_projector(xg[k], ug[k], P[k], proj_funcs, cfg)
+        P[k, P_PROJ_P] = Pk.flatten(order="F")
+        P[k, P_PROJ_Q] = Qk.flatten(order="F")
+        P[k, P_PROJ_UP] = upk
     return P
 
 
@@ -67,6 +75,8 @@ def shift_warmstart(x_prev, u_prev, node_times_prev, node_times_now, cfg):
 class WholeBodyMPC:
     def __init__(self, cfg: WBConfig, model, solver=None, max_iter: int = 1):
         self.cfg = cfg; self.model = model
+        from .projection_wb import build_projector_funcs
+        self._proj_funcs = build_projector_funcs(cfg, model)
         self.ocp, self.bundle = make_ocp(cfg)                   # DISCRETE raw-u; contact equalities = con_h toggled by per-node bounds
         self.solver = solver if solver is not None else build_solver(self.ocp)
         self.solver.options_set("max_iter", int(max_iter))      # RUNTIME SQP iters (lowers the ceiling baked in ocp_wb);
@@ -108,34 +118,33 @@ class WholeBodyMPC:
         comm[3] = np.clip(comm[3], -cfg.max_yaw_rate, cfg.max_yaw_rate)
         self._comm_filt = filter_command(self._comm_filt, comm)
         node_times = event_aligned_grid(t, self._gait, cfg)
-        P = build_node_params(x_meas, node_times, self._comm_filt, self._gait, cfg, self.model)
-        # Warm-start (where single-RTI linearizes) = the shifted previous solution (trajectorySpread), or x_meas at t0.
         if self._x_prev is not None:
             xg, ug = shift_warmstart(self._x_prev, self._u_prev, self._node_times_prev, node_times, cfg)
         else:
             u0 = np.zeros(cfg.nu); u0[2] = u0[8] = self.model.total_mass() * 9.81 / 2.0
             xg = np.tile(x_meas, (cfg.N + 1, 1)); ug = np.tile(u0, (cfg.N, 1))
-        self._last_warmstart_x, self._last_warmstart_u = xg, ug   # for the Newton-step-norm diagnostic
+        ug_full = np.vstack([ug, ug[-1]])                       # N+1 rows for the terminal projector node
+        P = build_node_params(x_meas, node_times, self._comm_filt, self._gait, cfg, self.model, xg, ug_full, self._proj_funcs)
         for k in range(cfg.N + 1):
             self.solver.set(k, "x", xg[k])
         for k in range(cfg.N):
             self.solver.set(k, "u", ug[k])
         for k in range(cfg.N + 1):
             self.solver.set(k, "p", P[k])
-        # Per-node contact activation: con_h bounds (ZeroAccel stance / SwingZ swing) + swing-wrench box bounds.
-        for k in range(cfg.N):
-            lf, rf = P[k, P_CONTACT]
-            lh, uh = stage_constraint_bounds(lf, rf)
-            self.solver.constraints_set(k, "lh", lh); self.solver.constraints_set(k, "uh", uh)
-            lbu, ubu = stage_wrench_bounds(lf, rf)
-            self.solver.constraints_set(k, "lbu", lbu); self.solver.constraints_set(k, "ubu", ubu)
+        self._last_warmstart_x, self._last_warmstart_u = xg, ug
         self.solver.constraints_set(0, "lbx", x_meas)
         self.solver.constraints_set(0, "ubx", x_meas)
         status = self.solver.solve()
         x_traj = np.array([self.solver.get(k, "x") for k in range(cfg.N + 1)])
         u_traj = np.array([self.solver.get(k, "u") for k in range(cfg.N)])
+        from .cost_wb import P_PROJ_P, P_PROJ_Q, P_PROJ_UP
+        u_phys_traj = np.empty((cfg.N, cfg.nu))
+        for k in range(cfg.N):
+            Pk = P[k, P_PROJ_P].reshape(cfg.nu, cfg.nu, order="F")
+            Qk = P[k, P_PROJ_Q].reshape(cfg.nu, cfg.nx, order="F")
+            u_phys_traj[k] = Pk @ u_traj[k] + Qk @ x_traj[k] + P[k, P_PROJ_UP]
         self._x_prev, self._u_prev, self._t_prev = x_traj, u_traj, t
         self._node_times_prev = node_times
         return MPCResult(x_traj=x_traj, u_traj=u_traj, feasible=(status == 0),
                          solve_time=time.perf_counter() - t0, mode_schedule=None, status=int(status),
-                         node_times=node_times)
+                         node_times=node_times, u_phys_traj=u_phys_traj)

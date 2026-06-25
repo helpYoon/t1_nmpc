@@ -15,3 +15,4 @@ class MPCResult:
     mode_schedule: object
     status: int               # acados solve status (0 == success)
     node_times: np.ndarray = None  # (N+1,) absolute wall-clock times of each state node; None = uniform cfg.dt
+    u_phys_traj: np.ndarray | None = None    # physical (projected) inputs P@u+Q@x+u_p for execution

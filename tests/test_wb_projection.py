@@ -170,3 +170,23 @@ def test_ocp_has_projector_params_and_no_contact_con_h():
     # ZeroWrench input box removed; joint-position box (idxbx) kept
     assert getattr(ocp.constraints, "idxbu", np.array([])).size == 0
     assert ocp.constraints.idxbx.size == 27
+
+
+# ---------------------------------------------------------------------------
+# Task 7: mpc_wb projector wiring + u_phys_traj
+# ---------------------------------------------------------------------------
+from t1_nmpc.wb.mpc_wb import WholeBodyMPC
+
+
+def test_step_fills_projector_params_and_u_phys_traj():
+    cfg = make_wb_config(); m = WBModel(cfg)
+    mpc = WholeBodyMPC(cfg, m)
+    mpc.set_command([0.3, 0.0, 0.0, 0.0, 0.0])
+    x0 = m.nominal_state(); mpc.reset(x0)
+    res = mpc.step(x0, 0.0)
+    assert res.u_phys_traj is not None and res.u_phys_traj.shape == (cfg.N, cfg.nu)
+    # the projector zeroes the SWING foot's 6-wrench block; a walking horizon has single-support nodes,
+    # so on some node ONE foot's wrench is ~0 while the other carries weight (the full 12-block never is).
+    wl = np.abs(res.u_phys_traj[:, 0:6]).sum(axis=1)     # left-foot wrench magnitude per node
+    wr = np.abs(res.u_phys_traj[:, 6:12]).sum(axis=1)    # right-foot wrench magnitude per node
+    assert np.min(np.minimum(wl, wr)) < 1e-6
