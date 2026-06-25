@@ -153,7 +153,7 @@ class MujocoRuntime:
         self.qpos_trace = []
         self.t = 0.0
 
-    # ---- actuator mapping (28 actuators -> joint-local idx; Waist has none) ----
+    # ---- actuator mapping (29 actuators -> joint-local idx; Waist actuated) ----
     def _build_actuator_map(self):
         # State joint-local order is the §A.5 order == MuJoCo joints 1..29 order.
         mj_joint_names = []
