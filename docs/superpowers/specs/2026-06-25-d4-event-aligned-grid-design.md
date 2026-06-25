@@ -28,7 +28,7 @@ All node-grid logic lives in a new single-purpose module `grid_wb.py`. Both the 
 
 Faithful **fixed-N adaptation** of OCS2 `timeDiscretizationWithEvents` (`TimeDiscretization.cpp:60-114`), which marches at uniform `dt` and snaps the crossing node onto each event (shortening only that pre-event interval). Pure function; returns `N+1` strictly-increasing times spanning `[t0, t0+T]` (T = `cfg.N·cfg.dt`, horizon **unchanged**), with a node exactly on every gait switch in the window.
 
-1. `switches = gait.switch_times_in(t0, t0+T)` — interior switch times.
+1. `switches` = the **real contact-mode changes** in `(t0, t0+T)`: `gait.switch_times_in` filtered to times where `contact_flags` actually changes (drops phase-0 cycle wraps that do NOT change the mode — e.g. `STANCE_GAIT`, whose `switch_times_in` returns the period wraps `0.5, 1.0, …`), AND excluding any switch within `0.5·dt` of `t0` or `t0+T` (a near-boundary switch would force a sub-`0.5·dt` segment; it is re-aligned on the earlier ticks while it is deeper in the horizon). This replaces the deleted `min_dt` floor — both filters are required (verified Task 2: without the mode-change filter `STANCE_GAIT` breaks the uniform invariant; without the boundary drop a switch near `t0` either makes a tiny interval or, if merged, silently loses its node).
 2. Segment boundaries `B = [t0, *switches, t0+T]`, `M = len(B)-1` segments (`M ≤ ~3 ≪ N`).
 3. Per segment, `n_k = max(1, round(len_k / cfg.dt))` intervals (keeps dt ≈ nominal — OCS2's uniform-dt marching). Reconcile `Σ n_k` to exactly `N` by adding/removing one interval from the **longest** segment (never a 1-interval segment; switch nodes stay exact).
 4. Place each segment's intervals uniformly; concatenate.
@@ -54,9 +54,10 @@ New `Gait.switch_times_in(t0, t1)` helper (`gait_wb.py`): the gait is periodic (
 
 ### 3. Cost time-scaling (faithful `Σ dt_k·L_k`)
 
-- `build_cost_conl`: scale the **entire** stage cost by its interval — `psi_scaled = p[P_DT] · psi` — so LS tracking *and* the friction/CoP/collision barriers are time-integrated, as OCS2 does. Scaling by a positive parameter preserves convexity in `r` and the GN Hessian PSD-ness.
-- `ocp_wb.py`: set `ocp.solver_options.cost_scaling = np.ones(N+1)` so the `P_DT` factor is the **single** source of time-weighting (acados otherwise defaults `cost_scaling` to the time-step array → double-scaling). Terminal node unscaled.
-- At the nominal uniform grid `dt_k = 0.035 = tf/N`, `p[P_DT]·psi` with `cost_scaling=1` should equal acados's current default (`time_steps`-scaled) cost → **no retuning**. This equality assumes acados's default `cost_scaling` is the time-step array (Risk 1); if not, the nominal scale differs by a constant and the weights take a one-time constant rescale — the regression test (§Testing) detects either case.
+- `build_cost_conl`: scale the **entire** stage cost by its **normalized** interval — `psi_scaled = (p[P_DT] / cfg.dt) · psi` — so LS tracking *and* the friction/CoP/collision barriers are time-integrated, as OCS2 does. Scaling by a positive parameter preserves convexity in `r` and the GN Hessian PSD-ness.
+- **Spike resolved (Task 4):** acados's default `cost_scaling` for this OCP is **1**, NOT the time-step array — i.e. the port was *not* time-scaling the cost at all (cost = `Σ psi_k`). So the un-normalized `p[P_DT]·psi` (×0.035 at nominal) shrank the absolute cost ~28.6× against the fixed `levenberg_marquardt=1e-3`, the LM regularization dominated, and the M0 stand collapsed (211 MINSTEP). **Normalizing by `cfg.dt`** makes the factor exactly **1 at the nominal grid** (cost unchanged → tuning preserved → stand passes) while the *relative* per-stage weight is still `∝ dt_k` — OCS2's `Σ dt_k·L_k` up to a global constant `1/cfg.dt` absorbed into the (unchanged) weights. Faithful in the relative time-integral, which is what affects the solution.
+- `ocp_wb.py`: set `ocp.solver_options.cost_scaling = np.ones(N+1)` to pin the time-weighting to the `P_DT`-in-`psi` factor and guard against an acados version that defaults `cost_scaling` to `time_steps`. Terminal node unscaled.
+- **Regression (the guard):** at the nominal uniform grid every `dt_k = cfg.dt`, so the factor is exactly 1 → the solve reproduces the pre-D4 (post-Tier-1) uniform-grid solve and the M0 stand still PASSES.
 
 ### 4. Per-tick wiring (`mpc_wb.py`)
 

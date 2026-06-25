@@ -164,9 +164,8 @@ def build_cost_conl(x, u, p, cfg, model):
         psi = psi + _relaxed_barrier(r[n_ls + j], float(mu), float(dl))
     for j in range(h_coll.shape[0]):                        # 16 leg-collision margins -> piecewise-poly barrier
         psi = psi + _piecewise_poly_barrier(r[n_ls + n_bar + j], cfg.collision_barrier_mu, cfg.collision_barrier_delta)
-    # Faithful time-integral: OCS2 scales each stage by its interval (SqpSolver.cpp:387,457).
-    # Scaling the whole stage cost (LS + barriers) by the positive per-stage dt preserves convexity in r.
-    psi = p[P_DT] * psi
+    # Faithful time-integral (normalized so the nominal grid dt_k=cfg.dt gives factor 1 -> tuning preserved; relative weight stays proportional to dt_k, OCS2 SqpSolver.cpp:387,457).
+    psi = (p[P_DT] / cfg.dt) * psi
     yref = np.zeros(y.shape[0])
     return y, yref, psi, r
 

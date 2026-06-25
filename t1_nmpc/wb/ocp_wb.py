@@ -152,8 +152,9 @@ def make_ocp(cfg: WBConfig, discrete: bool = True, compile_flags: str | None = N
     # Baked compile flags = the single source of truth (build_solver reads them back for the Makefile
     # rewrite + the build hash). -march=native is build-CPU-specific (znver4) — revisit for HW
     # cross-compile. DISCRETE-O1 = 25ms (validated, ~2x ERK-O2's 52ms).
-    # P_DT (in psi) is the SOLE time-weighting; disable acados' default cost_scaling=time_steps to
-    # avoid double-scaling. Terminal (index N) unscaled. (D4)
+    # (p[P_DT]/dt in psi) is the SOLE time-weighting. acados' default cost_scaling for this OCP is 1
+    # (verified Task 4 spike: the cost was NOT time-scaled), so ones() is a no-op here but pins it and
+    # guards an acados version that might default to time_steps -> double-scale. Terminal unscaled. (D4)
     so.cost_scaling = np.ones(cfg.N + 1)
     so.ext_fun_compile_flags = compile_flags
     ocp.code_export_directory = os.path.join(_CODEGEN_DIR, "c_generated_code")
