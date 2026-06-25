@@ -6,7 +6,7 @@
 
 **Provenance:** this ledger replaces an earlier version that mislabeled three real bugs as "faithful" and concluded the walk failure was "not a faithfulness gap." A 14-dimension adversarial audit (each dimension extracted from both codebases, then attacked by a hostile skeptic, then given a closure plan; raw output `/tmp/.../wfsc0hx07.output`) corrected that. Every claim below is either marked **[verified]** (re-derived from the C++/task.info) or **[open]**.
 
-**Status legend:** ✅ faithful · 🔧 CLOSED (Tier 1, this session) · 🟠 OPEN Tier 2 · 🔴 OPEN Tier 3 · ⚪ real but low-priority.
+**Status legend:** ✅ faithful · 🔧 CLOSED (Tier 1, this session) · 🔧 CLOSED (Tier 2, this session) · 🟠 OPEN Tier 2 · 🔴 OPEN Tier 3 · ⚪ real but low-priority.
 
 ---
 
@@ -34,7 +34,7 @@ The OCP **problem** is a line-for-line port on these dimensions (re-derived from
 | **B5** | Reference gravity-split + vel clamp | input ref **all-zero**; command bounded upstream (1.0/0.6/1.0) | gravity-split `u_ref fz=mg/n` (acados-only); vel caps stored but unused | minor | 🔧 CLOSED |
 | **B6** | Capture-point foot-placement cost | **none** (placement is emergent) | `_foot_placement_residual` (4 rows, inert at weight 0) — a latent divergence | latent | 🔧 REMOVED |
 | **D-JL** | Joint position limits | **soft** two-sided PieceWisePolynomialBarrier (μ1200/δ0.1) on 27 joints | **hard** acados state box (`idxbx`), no barrier/slack; the barrier consts are dead | material | 🟠 Tier 2 |
-| **D4** | Time discretization grid | **event-aligned** (a node lands on every contact switch) | fixed uniform N=31, dt=0.035 → switches fall mid-interval, quantized ±17 ms | **material** (walk suspect) | 🟠 Tier 2 |
+| **D4** | Time discretization grid | **event-aligned** (a node lands on every contact switch) | fixed uniform N=31, dt=0.035 → switches fall mid-interval, quantized ±17 ms | **material** (walk suspect) | 🔧 CLOSED |
 | **D1** | Contact-equality handling | null-space **projection** out of the QP → reduced unconstrained QP | con_h + per-node bounds inside HPIPM's KKT (un-projected) | **material** (not "neutral") | 🔴 Tier 3 |
 | **D2** | Solver numerical riders | pure GN, **no** Hessian reg, cold start, FILTER | LM 1e-3 + regularize=PROJECT + QP warm-start + MERIT — different-conditioned single-RTI QP | material | 🔴 Tier 3 |
 | **D5** | State estimator base height | lowest-foot-pinned FK (10 mm threshold) | MuJoCo **true** base pose | minor | ⚪ benign at stand |
@@ -48,10 +48,19 @@ The OCP **problem** is a line-for-line port on these dimensions (re-derived from
 - **B5 — reference.** Gravity-split relabeled as an acados-only single-RTI prior (not an OCS2 term); command velocity clamp now applied (`mpc_wb.py`).
 - **B6 — foot-placement removed.** The capture-point residual (weight 0, not in OCS2) was deleted; the walking residual is now **149 rows = OCS2's exact structure** (x + u + torque + swing-foot). Behavior unchanged (it was inert).
 
+### Closed this session (Tier 2)
+
+- **D4 — event-aligned time grid.** **Mechanism:** `grid_wb.event_aligned_grid` places a node on every in-horizon contact-mode switch; a new per-stage parameter `P_DT` is threaded into both the discrete RK4 integrator and the stage cost so the cost is the faithful time-integral, **normalized**: `psi *= p[P_DT]/cfg.dt`. Grounded in OCS2 `TimeDiscretization.cpp:60–114` and `SqpSolver.cpp:387,457`.
+
+  **Spike finding:** acados' default `cost_scaling` for this OCP is **1** (a constant), NOT the time-step array — so the un-normalized `p[P_DT]` (≈0.035) shrank the effective cost ~28.6× relative to the fixed `levenberg_marquardt=1e-3` and collapsed the stand (211 MINSTEP solver failures). Normalizing by `cfg.dt` gives factor 1 at the nominal grid (preserves all existing tuning) while keeping relative stage weight ∝ dt_k.
+
+  **Bounded divergences (faithful adaptation, documented):** (a) single node per switch — NOT OCS2's zero-length PreEvent/PostEvent jump duplication; the jump map is identity for this robot, so the only loss is applying the pre-jump (swing) constraint at the exact pre-touchdown instant; (b) the sub-`dt` remainder is spread evenly across each segment (round-per-segment) rather than placed as OCS2's one short pre-event interval; (c) fixed N=31 vs OCS2's variable node count; near-boundary switches (within 0.5·dt of t₀ or horizon end) are dropped and re-aligned on earlier ticks.
+
+  **Measured results:** M0 stand still PASS (peak_tilt 0.0279 rad, 0 solver failures). M1 walk vs the pre-D4 baseline (mean_vx 0.165, peak_tilt 2.22, n_fail 353): **n_fail 353 → 122 (−65%)**, peak_tilt 2.22 → 2.16, min_foot_z_at_stance_activation ≈ 0.03 m — but the robot **still falls** (mean_vx −0.015). Full test suite: 77 pass / 11 pre-existing fails, 0 new failures.
+
 ### Open — Tier 2
 
 - **D-JL — joint limits.** Port OCS2's soft two-sided `PieceWisePolynomialBarrier` (μ1200/δ0.1) as a `cost_wb` residual block (mirror `_foot_collision_residual`) and drop the hard `idxbx`. The dead `joint_limit_barrier_*` consts already exist.
-- **D4 — event-aligned time grid (prime walk suspect).** A mid-interval contact switch quantized to ±17 ms forces a STANCE constraint on a foot still ~2.4 mm above ground at −0.35 m/s up to 17 ms early → premature contact → vertical stomp (matches the failure). acados natively supports non-uniform `time_steps`, so the fix is per-tick event-aligned variable-dt at fixed N=31 (`ocp_wb.py` per-stage dt via `_rk4`; `mpc_wb.py` node times snapped to switches; `update_time_steps` each tick). The old "harder under fixed N / benign" framing was wrong.
 
 ### Open — Tier 3
 
@@ -63,11 +72,15 @@ The OCP **problem** is a line-for-line port on these dimensions (re-derived from
 
 The previous §5 — *"the walk failure is not traceable to a faithfulness gap, it's a closed-loop balance issue"* — is **refuted.** Three faithfulness gaps each match the stomp/over-stride signature:
 
-1. **D4 time-grid quantization** → premature STANCE constraint up to 17 ms early → vertical stomp. **Strongest suspect; Tier 2.**
+1. **D4 time-grid quantization** → premature STANCE constraint up to 17 ms early → vertical stomp. **Was Tier 2; now CLOSED this session.**
 2. **B1/B2 joint-torque over-penalty** on legs/ankles → suppressed push-off → over-stride/hop. **Fixed (Tier 1).**
-3. **D1 unprojected single-RTI QP** → equalities only to IPM tolerance, different conditioning. **Tier 3.**
+3. **D1 unprojected single-RTI QP** → equalities only to IPM tolerance, different conditioning. **Tier 3; now the leading remaining suspect.**
 
-**Tier 1 measurement:** with B1–B6 fixed, **M0 stand still PASSES** (peak tilt 0.028 rad, 0 solver failures) but **M1 walk still FAILS** identically (mean_vx 0.165, peak tilt 2.22, fell at step ~2, ACADOS_NAN once the robot tilts). So fixing the torque over-penalty alone is insufficient — the remaining suspects are **D4 (next)** and **D1**.
+**Tier 1 measurement:** with B1–B6 fixed, **M0 stand still PASSES** (peak tilt 0.028 rad, 0 solver failures) but **M1 walk still FAILS** identically (mean_vx 0.165, peak tilt 2.22, fell at step ~2, ACADOS_NAN once the robot tilts). So fixing the torque over-penalty alone is insufficient.
+
+**Tier 2 measurement (D4):** with the event-aligned grid implemented, solver failures dropped 65% (n_fail 353 → 122) and peak tilt improved marginally (2.22 → 2.16), confirming the quantization hypothesis. However, the closed-loop walk still fails (mean_vx −0.015) — the robot falls. D4 was a real contributor to instability but not the sole cause.
+
+**Leading remaining suspect: D1.** With D4 closed, the un-projected single-RTI QP (D1) is now the strongest open suspect. OCS2 eliminates contact equalities via null-space projection before solving; the port solves them inside HPIPM's KKT as inequality constraints, giving different QP conditioning and equality satisfaction only to IPM tolerance. This affects every step of the walk. D2 (LM regularization, QP warm-start, MERIT filter) is entangled with D1 and should be addressed together when wiring the already-implemented projector (`projection_wb.py`).
 
 ---
 
@@ -77,4 +90,4 @@ The previous §5 — *"the walk failure is not traceable to a faithfulness gap, 
 
 ## 5. Bottom line
 
-The port is **faithful on the problem** (§1) on every dimension that defines the OCP structure. The remaining divergences are concentrated in (a) three data/convention bugs now fixed (B1–B6) and (b) the **solver/timing layer** (D1, D2, D4, D-JL), where acados ≠ OCS2 forces a different mechanism. Contrary to the old conclusion, the residual **walk failure is plausibly a faithfulness gap** — specifically D4 (premature-contact quantization) and D1 (un-projected single-RTI conditioning) — and those are the next levers, not generic "balance."
+The port is **faithful on the problem** (§1) on every dimension that defines the OCP structure. The remaining divergences are concentrated in (a) data/convention bugs now fixed (B1–B6) and (b) the **solver/timing layer** (D1, D2, D-JL), where acados ≠ OCS2 forces a different mechanism. D4 (event-aligned grid) was implemented this session and measurably reduced solver failures by 65%, but walk still fails — **D1 (un-projected single-RTI conditioning) is now the leading remaining suspect** and the next lever to close.
