@@ -60,14 +60,21 @@ def _wb_reset(rt: MujocoRuntime, wb_cfg) -> None:
     rt.t = 0.0
 
 
-def _sample_plan(x_plan, u_plan, dt_off, node_dt, N):
+def _sample_plan(x_plan, u_plan, dt_off, node_times, N):
     """Linear-interp the planned (x,u) trajectory at dt_off seconds after the solve — the advancing
-    sample of MRT_BASE::evaluatePolicy. x_plan (N+1,68), u_plan (N,40)."""
-    s = max(0.0, dt_off) / node_dt
-    lo = min(int(np.floor(s)), N - 1)
-    a = min(max(s - lo, 0.0), 1.0)
-    x_star = (1.0 - a) * x_plan[lo] + a * x_plan[lo + 1]
-    u_star = (1.0 - a) * u_plan[lo] + a * u_plan[min(lo + 1, N - 1)]
+    sample of MRT_BASE::evaluatePolicy. x_plan (N+1,68), u_plan (N,40).
+
+    node_times: 1-D array of length N+1 with absolute wall-clock times of each state node, OR a
+    scalar node_dt for a uniform fallback (backward-compatibility with callers that pass cfg.dt).
+    """
+    nt = np.asarray(node_times, float)
+    if nt.ndim == 0:
+        # Scalar fallback: uniform grid starting at 0
+        node_dt = float(nt)
+        nt = np.arange(N + 1) * node_dt
+    tq = nt[0] + max(0.0, dt_off)
+    x_star = np.array([np.interp(tq, nt, x_plan[:, j]) for j in range(x_plan.shape[1])])
+    u_star = np.array([np.interp(tq, nt[:N], u_plan[:, j]) for j in range(u_plan.shape[1])])
     return x_star, u_star
 
 
@@ -93,6 +100,7 @@ def run_wb_stand(duration_s: float = 5.0, cmd=None, sample_ahead_s: float = 0.00
     mpc.reset(x0)
     res = mpc.step(x0, rt.t)
     x_plan, u_plan, t_solve = res.x_traj, res.u_traj, rt.t
+    node_times_plan = res.node_times if getattr(res, "node_times", None) is not None else wb_cfg.dt
 
     n_phys = int(round(duration_s * ccfg.physics_hz))
     cdecim, mdecim = rt.control_decim, rt.mpc_decim
@@ -110,6 +118,7 @@ def run_wb_stand(duration_s: float = 5.0, cmd=None, sample_ahead_s: float = 0.00
             if res.status not in (0, 2):   # 2 = single-RTI max_iter (normal); 1/3/4 = real solver failure
                 n_fail += 1
             x_plan, u_plan, t_solve = res.x_traj, res.u_traj, rt.t
+            node_times_plan = res.node_times if getattr(res, "node_times", None) is not None else wb_cfg.dt
             solve_ms.append(res.solve_time * 1e3)
             try:
                 solve_tot_ms.append(float(mpc.solver.get_stats("time_tot")) * 1e3)
@@ -122,7 +131,7 @@ def run_wb_stand(duration_s: float = 5.0, cmd=None, sample_ahead_s: float = 0.00
             # cycle + the measured-state feedforward resonance).
             q_pin, v_pin = rt._pin_q_v()
             q_meas = q_pin[8:35]; qd_meas = v_pin[8:35]
-            x_star, u_star = _sample_plan(x_plan, u_plan, rt.t + sample_ahead_s - t_solve, wb_cfg.dt, wb_cfg.N)
+            x_star, u_star = _sample_plan(x_plan, u_plan, rt.t + sample_ahead_s - t_solve, node_times_plan, wb_cfg.N)
             q_des, qd_des = x_star[6:33], x_star[39:66]
             tau_ff = wb_model.joint_torque(x_star, u_star)
             tau_wb = kp * (q_des - q_meas) + kd * (qd_des - qd_meas) + tau_ff

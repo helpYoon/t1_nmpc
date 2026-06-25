@@ -22,11 +22,10 @@ def to_joint_command_wb(result, cfg, model, sample_ahead_s: float = 0.005) -> Jo
     (state,input) pair into computeJointTorques AND the PD references — not node 0. tau_ff =
     model.joint_torque(x@t+dt, u@t+dt), the ID torque realizing the planned joint accel + contact
     wrenches at the resampled point."""
-    s = sample_ahead_s / cfg.dt
-    lo = int(np.floor(s)); hi = min(lo + 1, cfg.N); a = s - lo
-    lo_u = min(lo, cfg.N - 1); hi_u = min(lo + 1, cfg.N - 1)
-    xq = (1.0 - a) * result.x_traj[lo] + a * result.x_traj[hi]
-    uq = (1.0 - a) * result.u_traj[lo_u] + a * result.u_traj[hi_u]
+    nt = result.node_times if getattr(result, "node_times", None) is not None else (np.arange(cfg.N + 1) * cfg.dt)
+    tq = nt[0] + sample_ahead_s
+    xq = np.array([np.interp(tq, nt, result.x_traj[:, j]) for j in range(result.x_traj.shape[1])])
+    uq = np.array([np.interp(tq, nt[:cfg.N], result.u_traj[:, j]) for j in range(result.u_traj.shape[1])])
     tau_ff = model.joint_torque(xq, uq)
     return JointCommand(
         q_des=np.ascontiguousarray(xq[_QJ], dtype=np.float64),

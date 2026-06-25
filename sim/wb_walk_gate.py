@@ -54,6 +54,7 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
     mpc.reset(x0)
     res = mpc.step(x0, rt.t)
     x_plan, u_plan, t_solve = res.x_traj, res.u_traj, rt.t
+    node_times_plan = res.node_times if getattr(res, "node_times", None) is not None else wb_cfg.dt
 
     n_phys = int(round(duration_s * ccfg.physics_hz))
     cdecim, mdecim = rt.control_decim, rt.mpc_decim
@@ -73,6 +74,7 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
             if res.status not in (0, 2):
                 n_fail += 1
             x_plan, u_plan, t_solve = res.x_traj, res.u_traj, rt.t
+            node_times_plan = res.node_times if getattr(res, "node_times", None) is not None else wb_cfg.dt
             try:
                 solve_tot.append(float(mpc.solver.get_stats("time_tot")) * 1e3)
             except Exception:
@@ -90,7 +92,7 @@ def run_wb_walk(duration_s: float = 10.0, vx: float = 0.3, sample_ahead_s: float
         if k % cdecim == 0:
             q_pin, v_pin = rt._pin_q_v()
             q_meas = q_pin[8:35]; qd_meas = v_pin[8:35]
-            x_star, u_star = _sample_plan(x_plan, u_plan, rt.t + sample_ahead_s - t_solve, wb_cfg.dt, wb_cfg.N)
+            x_star, u_star = _sample_plan(x_plan, u_plan, rt.t + sample_ahead_s - t_solve, node_times_plan, wb_cfg.N)
             q_des, qd_des = x_star[6:33], x_star[39:66]
             tau_ff = wb_model.joint_torque(x_star, u_star)
             tau_wb = kp * (q_des - q_meas) + kd * (qd_des - qd_meas) + tau_ff

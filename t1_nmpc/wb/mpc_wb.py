@@ -49,9 +49,7 @@ def shift_warmstart(x_prev, u_prev, node_times_prev, node_times_now, cfg):
     D4 event-aligned (non-uniform, per-tick-varying) grid.
 
     node_times_prev / node_times_now: 1-D arrays of length N+1 with absolute wall-clock times of
-    each state node.  Accepts scalar floats for backward-compatibility: scalars t_prev, t_now are
-    expanded to uniform grids t_prev + k*dt and t_now + k*dt (so existing callers with integer /
-    fractional dt shifts continue to pass).
+    each state node.
     """
     tp = np.asarray(node_times_prev, float)
     tn = np.asarray(node_times_now, float)
@@ -137,4 +135,5 @@ class WholeBodyMPC:
         self._x_prev, self._u_prev, self._t_prev = x_traj, u_traj, t
         self._node_times_prev = node_times
         return MPCResult(x_traj=x_traj, u_traj=u_traj, feasible=(status == 0),
-                         solve_time=time.perf_counter() - t0, mode_schedule=None, status=int(status))
+                         solve_time=time.perf_counter() - t0, mode_schedule=None, status=int(status),
+                         node_times=node_times)

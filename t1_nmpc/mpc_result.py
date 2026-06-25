@@ -14,3 +14,4 @@ class MPCResult:
     solve_time: float         # seconds (full step)
     mode_schedule: object
     status: int               # acados solve status (0 == success)
+    node_times: np.ndarray = None  # (N+1,) absolute wall-clock times of each state node; None = uniform cfg.dt

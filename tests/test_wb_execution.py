@@ -7,9 +7,10 @@ from t1_nmpc.wb.execution_wb import to_joint_command_wb
 
 
 class _Result:
-    def __init__(self, x_traj, u_traj):
+    def __init__(self, x_traj, u_traj, node_times=None):
         self.x_traj = x_traj
         self.u_traj = u_traj
+        self.node_times = node_times  # None exercises uniform fallback
 
 
 def test_tau_ff_from_lookahead_sample_not_node0():
