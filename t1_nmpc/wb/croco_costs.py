@@ -117,12 +117,12 @@ def build_costs(state, actuation, nu, x_ref, com_ref, stance_fids, cfg,
         fcone = crocoddyl.FrictionCone(R_foot, float(cfg.friction_mu), 4, False)
         fres = crocoddyl.ResidualModelContactFrictionCone(state, fid, fcone, nu, False)
         costs.addCost(f"friction_{fid}", crocoddyl.CostModelResidual(
-            state, RelaxedBarrier(fres.nr, cfg.friction_barrier_mu, cfg.friction_barrier_delta), fres),
+            state, RelaxedBarrier(fcone.lb, fcone.ub, cfg.friction_barrier_mu, cfg.friction_barrier_delta), fres),
             float(cfg.friction_cone_reg))
         cop = crocoddyl.CoPSupport(R_foot, box)
         cres = crocoddyl.ResidualModelContactCoPPosition(state, fid, cop, nu, False)
         costs.addCost(f"cop_{fid}", crocoddyl.CostModelResidual(
-            state, RelaxedBarrier(cres.nr, cfg.cop_barrier_mu, cfg.cop_barrier_delta), cres), 1.0)
+            state, RelaxedBarrier(cop.lb, cop.ub, cfg.cop_barrier_mu, cfg.cop_barrier_delta), cres), 1.0)
         # stance z->ground + foot-flat stabilization (weights seeded from gains)
         zres = crocoddyl.ResidualModelFrameTranslation(state, fid, planted[fid].translation, nu)
         zact = crocoddyl.ActivationModelWeightedQuad(np.array([0., 0., 1.], float))   # z only

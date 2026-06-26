@@ -87,21 +87,23 @@ class CrocoMPC:
         t_gait = float(t)
         self._t_gait = t_gait
         prob = self.builder.build_walk_problem(x66, t_gait, self._comm, self.gait, np.asarray(x_meas_68, float))
+        # The gait changes the contact structure every cycle and crocoddyl's solver.problem is
+        # not reassignable, so SolverIntro is rebuilt each cycle. A *fresh* solver at maxiter=1
+        # diverges from a shifted previous-solution warm-start (the single RTI cannot recover the
+        # residual the shift introduces -> stoppingCriteria grows cycle over cycle and the robot
+        # falls). Re-anchoring the warm-start to the static-equilibrium control of the CURRENT
+        # state each cycle is well-posed (low residual every cycle) and holds double support.
         self.solver = crocoddyl.SolverIntro(prob); self.solver.setCallbacks([])
-        # FIX 2: RTI warm-start shift from previous solution; fall back to quasiStatic on
-        # first call or after a nu-change (e.g. stand->walk transition changes force dimension)
-        try:
-            us = self._us[1:] + [self._us[-1]]              # receding-horizon shift
-            xs = list(prob.rollout(us))                      # gap-free xs from shifted us
-        except Exception:
-            # dimension mismatch on first call or after reset: fall back to quasiStatic
-            us = list(prob.quasiStatic([x66.copy() for _ in range(self.N)]))
-            xs = list(prob.rollout(us))
+        us = list(prob.quasiStatic([x66.copy() for _ in range(self.N)]))
+        xs = list(prob.rollout(us))
         t0 = time.perf_counter(); self.solver.solve(xs, us, self.max_iter, True, _REG)
         self.last_solve_s = time.perf_counter() - t0
-        self._xs = list(self.solver.xs); self._us = list(self.solver.us)    # carryover for next cycle
+        self._xs = list(self.solver.xs); self._us = list(self.solver.us)    # carryover (telemetry/next reset)
         xs_arr = np.asarray(self.solver.xs)
-        ok = bool(np.all(np.isfinite(xs_arr)) and self.solver.isFeasible)
+        # Single-RTI applies the first control regardless of crocoddyl's gap-feasibility flag (one
+        # iteration legitimately leaves small dynamic gaps -> isFeasible=False is normal and must
+        # not discard an otherwise-finite plan); only a non-finite solve is a genuine failure.
+        ok = bool(np.all(np.isfinite(xs_arr)))
         x_traj = np.zeros((self.N + 1, 68)); x_traj[:, :66] = xs_arr
         u_traj = self._acados_layout_walk(self.solver.us, t_gait)
         if not ok:
