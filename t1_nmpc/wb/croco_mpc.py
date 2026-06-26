@@ -12,6 +12,7 @@ import crocoddyl
 
 from ..mpc_result import MPCResult
 from .croco_problem import T1ProblemBuilder
+from .croco_walk import WalkOCP
 
 _REG = 1e-9
 
@@ -32,10 +33,16 @@ class CrocoMPC:
         self._us = list(self.problem.quasiStatic([self._x0.copy() for _ in range(self.N)]))
         self._node_times = np.arange(self.N + 1) * float(cfg.dt)
         self.last_solve_s = 0.0
-        # Walk mode (gait=None -> M0 stand path unchanged)
+        # Walk mode (gait=None -> M0 stand path unchanged). The walk OCP is a persistent
+        # both-contacts-every-node problem solved by a persistent solver, warm-started from the
+        # previous solution (OCS2-faithful); see croco_walk.WalkOCP.
         self.gait = gait
         self._t_gait = 0.0
         self._comm = np.array([0., 0., float(cfg.nominal_base_height), 0.])
+        if gait is not None:
+            self._walk_ocp = WalkOCP(cfg, wb)
+            self._walk_solver = crocoddyl.SolverIntro(self._walk_ocp.problem)
+            self._walk_solver.setCallbacks([])
 
     def _nominal66(self):
         q0 = pin.neutral(self.builder.model); q0[2] = self.cfg.nominal_base_height
@@ -45,9 +52,12 @@ class CrocoMPC:
     def reset(self, x0_68):
         x66 = np.asarray(x0_68, float)[:66]
         self._x0 = x66.copy()
-        self.problem.x0 = x66
+        prob = self._walk_ocp.problem if self.gait is not None else self.problem
+        if self.gait is not None:
+            self._comm = np.array([0., 0., float(self.cfg.nominal_base_height), 0.])
+        prob.x0 = x66
         self._xs = [x66.copy() for _ in range(self.N + 1)]
-        self._us = list(self.problem.quasiStatic([x66.copy() for _ in range(self.N)]))
+        self._us = list(prob.quasiStatic([x66.copy() for _ in range(self.N)]))
 
     def step(self, x_meas_68, t, command=None) -> MPCResult:
         # Walk mode path (gait is set)
@@ -83,29 +93,24 @@ class CrocoMPC:
         if command is not None:
             from .reference_wb import filter_command
             self._comm = filter_command(self._comm, command)
-        # FIX 1: gait clock tracks real sim time, not self-increment
-        t_gait = float(t)
+        t_gait = float(t)                                 # gait clock tracks the real sim time
         self._t_gait = t_gait
-        prob = self.builder.build_walk_problem(x66, t_gait, self._comm, self.gait, np.asarray(x_meas_68, float))
-        # The gait changes the contact structure every cycle and crocoddyl's solver.problem is
-        # not reassignable, so SolverIntro is rebuilt each cycle. A *fresh* solver at maxiter=1
-        # diverges from a shifted previous-solution warm-start (the single RTI cannot recover the
-        # residual the shift introduces -> stoppingCriteria grows cycle over cycle and the robot
-        # falls). Re-anchoring the warm-start to the static-equilibrium control of the CURRENT
-        # state each cycle is well-posed (low residual every cycle) and holds double support.
-        self.solver = crocoddyl.SolverIntro(prob); self.solver.setCallbacks([])
-        us = list(prob.quasiStatic([x66.copy() for _ in range(self.N)]))
-        xs = list(prob.rollout(us))
-        t0 = time.perf_counter(); self.solver.solve(xs, us, self.max_iter, True, _REG)
+        # Mutate the persistent walk OCP in place (retarget references, toggle stance/swing per node)
+        # and re-solve the persistent solver warm-started from the previous solution -- the crocoddyl
+        # analog of OCS2's coldStart=false primalSolution_ + trajectorySpread (see croco_walk.WalkOCP).
+        self._walk_ocp.update(x66, t_gait, self._comm, self.gait, np.asarray(x_meas_68, float))
+        us = self._us[1:] + [self._us[-1]]                # receding-horizon shift of the previous solution
+        xs = self._xs[1:] + [self._xs[-1]]; xs[0] = x66.copy()
+        t0 = time.perf_counter(); self._walk_solver.solve(xs, us, self.max_iter, False, _REG)
         self.last_solve_s = time.perf_counter() - t0
-        self._xs = list(self.solver.xs); self._us = list(self.solver.us)    # carryover (telemetry/next reset)
-        xs_arr = np.asarray(self.solver.xs)
+        self._xs = list(self._walk_solver.xs); self._us = list(self._walk_solver.us)
+        xs_arr = np.asarray(self._walk_solver.xs)
         # Single-RTI applies the first control regardless of crocoddyl's gap-feasibility flag (one
-        # iteration legitimately leaves small dynamic gaps -> isFeasible=False is normal and must
-        # not discard an otherwise-finite plan); only a non-finite solve is a genuine failure.
+        # iteration legitimately leaves small dynamic gaps -> isFeasible=False is normal); only a
+        # non-finite solve is a genuine failure.
         ok = bool(np.all(np.isfinite(xs_arr)))
         x_traj = np.zeros((self.N + 1, 68)); x_traj[:, :66] = xs_arr
-        u_traj = self._acados_layout_walk(self.solver.us, t_gait)
+        u_traj = self._acados_layout_walk(self._walk_solver.us, t_gait)
         if not ok:
             x_traj[:] = x_traj[0]; u_traj = np.zeros((self.N, 40))
         return MPCResult(x_traj=x_traj, u_traj=u_traj, feasible=ok, solve_time=self.last_solve_s,
@@ -127,15 +132,16 @@ class CrocoMPC:
         return out
 
     def _acados_layout_walk(self, us, t_gait):
-        """Stance-aware mapping: force order matches make_node's enumerate(stance_fids) (left before right).
-        Per node query gait.contact_flags to determine which slots to fill."""
+        """Fixed both-contacts layout: u forces are always [c0=left(6), c1=right(6)]. Zero the
+        wrench of a swing foot (its contact is inactive that node) so execution applies no ground
+        reaction for a foot in the air."""
         out = np.zeros((self.N, 40)); dt = float(self.cfg.dt)
         for k, u in enumerate(us):
             u = np.asarray(u, float); a = u[:self.nv]; forces = u[self.nv:]
             out[k, 12:39] = a[6:33]
             flags = self.gait.contact_flags(t_gait + k * dt)      # (left, right)
-            stance = [i for i in (0, 1) if flags[i]]              # contact order matches make_node enumerate
-            for j, side in enumerate(stance):
-                sl = slice(0, 6) if side == 0 else slice(6, 12)   # left->W_l, right->W_r
-                out[k, sl] = forces[6*j:6*j+6]
+            if flags[0]:
+                out[k, 0:6] = forces[0:6]                         # left contact c0 -> W_l
+            if flags[1]:
+                out[k, 6:12] = forces[6:12]                       # right contact c1 -> W_r
         return out

@@ -20,34 +20,20 @@ def _ctx():
     return cfg, wb, state, act, planted, x0
 
 
-def test_walk_costs_single_support_has_swing_and_relaxed_terms():
-    cfg, wb, state, act, planted, x0 = _ctx()
-    L, R = wb.contact_fids
-    nu = wb.model.nv + 6                                  # single support
-    swing = dict(fid=R, z=0.05, w_z=1e3)
-    costs = croco_costs.build_costs(state, act, nu, x0[:66], np.zeros(3), [L], cfg,
-                                    swing=swing, planted=planted, walk=True)
-    names = set(costs.costs.todict().keys())
-    assert {"xreg", "ureg", "tau_lim", "swing_z", "swing_vel", "swing_flat",
-            f"friction_{L}", f"cop_{L}", f"stance_z_{L}", f"stance_flat_{L}"} <= names
-    assert not any(n.startswith("wrenchcone") for n in names)   # walk uses split friction/CoP
-
-
-def test_walk_costs_m0_path_unchanged():
+def test_costs_m0_stance_has_wrenchcone():
     cfg, wb, state, act, planted, x0 = _ctx()
     L, R = wb.contact_fids
     nu = wb.model.nv + 12
-    costs = croco_costs.build_costs(state, act, nu, x0[:66], np.zeros(3), [L, R], cfg)  # walk=False default
+    costs = croco_costs.build_costs(state, act, nu, x0[:66], np.zeros(3), [L, R], cfg)
     names = set(costs.costs.todict().keys())
-    assert any(n.startswith("wrenchcone") for n in names)       # M0 WrenchCone preserved
-    assert not any(n.startswith("swing") for n in names)
+    assert {"xreg", "com", "ureg", "tau_lim", "joint_lim"} <= names
+    assert any(n.startswith("wrenchcone") for n in names)       # M0 stance WrenchCone
 
 
-def test_walk_costs_terminal_is_qfinal():
+def test_costs_terminal_is_qfinal():
     cfg, wb, state, act, planted, x0 = _ctx()
     L, R = wb.contact_fids; nu = wb.model.nv + 12
-    costs = croco_costs.build_costs(state, act, nu, x0[:66], np.zeros(3), [L, R], cfg,
-                                    planted=planted, walk=True, terminal=True)
+    costs = croco_costs.build_costs(state, act, nu, x0[:66], np.zeros(3), [L, R], cfg, terminal=True)
     names = list(costs.costs.todict().keys())
     assert names == ["xreg"]                                    # state-only terminal
     w = np.asarray(costs.costs["xreg"].cost.activation.weights)

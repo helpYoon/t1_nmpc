@@ -157,6 +157,9 @@ class WBConfig:
     swingfoot_cost_weights: np.ndarray = field(
         default_factory=lambda: np.array([1e4, 1e4, 5.0, 5.0, 2.0, 2.0, 2.0], dtype=np.float64)
     )
+    # swing-foot vertical-tracking cost weight (soft replacement for OCS2's hard SwingLegVertical
+    # equality; the swing-z target follows the gait SplineCpg). Seeded from the validated walk spike.
+    swingfoot_z_weight: float = 1.0
     # --- arm swing (SwitchedModelReferenceManager.cpp:136-143) ---
     arm_swing_amplitude: float = 0.15
     arm_swing_phase_offset: float = 0.15
@@ -186,9 +189,10 @@ class WBConfig:
     collision_barrier_delta: float = 0.04
     foot_rect_x: Tuple[float, float] = (-0.1115, 0.1115)
     foot_rect_y: Tuple[float, float] = (-0.05, 0.05)  # FAITHFUL to t1_controller contact_rectangle (task.info:473-474).
-    # Was shrunk to +-0.035 as a workaround for the OLD flat-L2 CoP slack (no interior repulsion -> CoP rode the
-    # +-0.05 edge -> MuJoCo's hard foot-box rolled the foot). Now the interior-repulsive RelaxedBarrier keeps the
-    # CoP off the edge on its own, so the real +-0.05 half-width is correct AND restores ~43% lateral CoP authority.
+    # NOTE: the CoP cone uses a QuadraticBarrier (penalises only OUTSIDE the rectangle, no interior
+    # repulsion) because the exact OCS2 log-relaxed barrier is incompatible with the single-RTI DDP
+    # solver. So the CoP can ride the +-0.05 edge; if foot-roll reappears in walking, shrinking this
+    # half-width (the old +-0.035 workaround) buys edge margin. Holds clean in double support.
 
     # --- per-joint dynamics + PD ---
     kp: np.ndarray = field(default_factory=_build_kp)
