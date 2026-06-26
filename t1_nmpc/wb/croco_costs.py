@@ -74,8 +74,11 @@ def build_costs(state, actuation, nu, x_ref, com_ref, stance_fids, cfg, terminal
     costs.addCost("joint_lim", crocoddyl.CostModelResidual(state, jbar, jres),
                   float(cfg.joint_limit_barrier_mu))
 
-    # --- 6. stance wrench cone (combined WrenchCone + QuadraticBarrier, feet flat on flat ground) ---
-    box = np.array([cfg.foot_rect_x[1], cfg.foot_rect_y[1]], float)
+    # --- 6. stance wrench cone (feet flat on flat ground). U9: WrenchCone takes the FULL support
+    # rectangle (it bounds CoP to +/-box/2); half-extents were passed -> support polygon quartered.
+    # Barrier stays QuadraticBarrier (NOT the relaxed log barrier -- that collapses warm-started DDP,
+    # bisected 2026-06-26; see croco_walk.py). Only the box-dims bug is fixed here. ---
+    box = np.array([cfg.foot_rect_x[1] - cfg.foot_rect_x[0], cfg.foot_rect_y[1] - cfg.foot_rect_y[0]], float)
     R_foot = np.eye(3)
     for fid in stance_fids:
         cone = crocoddyl.WrenchCone(R_foot, float(cfg.friction_mu), box)

@@ -16,14 +16,17 @@ _QJ = slice(6, 33)     # q_joints (27)
 _VJ = slice(39, 66)    # v_joints (27)
 
 
-def to_joint_command_wb(result, cfg, model, sample_ahead_s: float = 0.005) -> JointCommand:
-    """q_des/qd_des/tau_ff/wrenches ALL sampled at t+sample_ahead_s (linear interp between shooting
-    nodes). Faithful to OCS2 MpcMrtJointController.cpp:256-262, which feeds the SAME look-ahead
-    (state,input) pair into computeJointTorques AND the PD references — not node 0. tau_ff =
-    model.joint_torque(x@t+dt, u@t+dt), the ID torque realizing the planned joint accel + contact
-    wrenches at the resampled point."""
+def to_joint_command_wb(result, cfg, model, sample_ahead_s: float = 0.005, t_now=None) -> JointCommand:
+    """q_des/qd_des/tau_ff/wrenches sampled at t+sample_ahead_s (linear interp between shooting nodes).
+    Faithful to OCS2 MpcMrtJointController, which feeds the SAME look-ahead (state,input) pair into
+    computeJointTorques AND the PD references.
+
+    U2: pass `t_now` (the LIVE control-clock time) so the command is resampled at `t_now + look-ahead`
+    EVERY control tick, marching along the optimized plan between MPC re-solves (OCS2 resamples
+    policy(now) at the control rate). Without it the command freezes at the plan-start node and the leg
+    references lag up to a re-solve period. Falls back to the plan start (node_times[0]) if t_now=None."""
     nt = result.node_times if getattr(result, "node_times", None) is not None else (np.arange(cfg.N + 1) * cfg.dt)
-    tq = nt[0] + sample_ahead_s
+    tq = (float(nt[0]) if t_now is None else float(t_now)) + sample_ahead_s
     xq = np.array([np.interp(tq, nt, result.x_traj[:, j]) for j in range(result.x_traj.shape[1])])
     u_src = result.u_phys_traj if getattr(result, "u_phys_traj", None) is not None else result.u_traj
     uq = np.array([np.interp(tq, nt[:cfg.N], u_src[:, j]) for j in range(u_src.shape[1])])

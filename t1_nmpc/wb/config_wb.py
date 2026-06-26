@@ -153,13 +153,26 @@ class WBConfig:
 
     # --- swing-foot vertical-constraint accel gain (task.info:19) ---
     foot_linacc_err_gain_z: float = 1.0
+    # --- stance-foot hard pose feedback (OCS2 getStanceFootConstraint Ax: pos_z=100, ori=80). crocoddyl
+    # ContactModel6D applies ONE uniform kp to all 6 DoF (vs OCS2's selective pos_xy=0/ori=80), so the
+    # faithful 100 over-stiffens orientation+xy and tips the robot; kp=50 is the crocoddyl-equivalent
+    # sweet spot (empirical: kp=50 walks ~5s, kp=100 falls @0.2s, kp=0 falls @2s). ---
+    stance_contact_kp: float = 50.0
+    # --- CoP tipping margin (Fix #2): QuadraticBarrier has zero interior gradient, so the optimizer
+    # rides the CoP to the foot edge (zero margin). Shrink the support box to a fraction and raise the
+    # weight so the CoP is kept inside an inner rectangle -> stability margin (approximates OCS2's
+    # relaxed interior-point barrier without its single-RTI stiffness). ---
+    cop_margin_scale: float = 1.0    # full support rectangle (OCS2 uses the full foot; no shrink)
+    cop_weight: float = 20.0
     # --- swing-foot task-space cost weights (task.info:436-453: ori_xy=1e4, linvel_xy=5, angvel_xyz=2) ---
     swingfoot_cost_weights: np.ndarray = field(
         default_factory=lambda: np.array([1e4, 1e4, 5.0, 5.0, 2.0, 2.0, 2.0], dtype=np.float64)
     )
-    # swing-foot vertical-tracking cost weight (soft replacement for OCS2's hard SwingLegVertical
-    # equality; the swing-z target follows the gait SplineCpg). Seeded from the validated walk spike.
-    swingfoot_z_weight: float = 1.0
+    # Swing-foot VERTICAL tracking (soft form of t1_controller's foot_constraint Z Baumgarte: it tracks
+    # the SwingTrajectoryPlanner z spline with position gain 100 + velocity gain 10, XY emergent). Soft
+    # weights strong enough to reliably lift the foot so the MPC can place it in XY emergently.
+    swingfoot_z_weight: float = 1.0e3     # swing-z POSITION tracking
+    swingfoot_vz_weight: float = 1.0e2    # swing-z VELOCITY tracking (drives the lift rate)
     # --- arm swing (SwitchedModelReferenceManager.cpp:136-143) ---
     arm_swing_amplitude: float = 0.15
     arm_swing_phase_offset: float = 0.15
@@ -173,6 +186,7 @@ class WBConfig:
     contact_proj_eps: float = 1e-6
     pin_rho: float = 1.0          # ker(P)-confined nullspace pin weight (does not bias u_phys)
     friction_mu: float = 0.4
+    friction_min_nforce: float = 10.0   # U6: min normal force per stance foot (keeps it loaded)
     friction_barrier_mu: float = 0.2
     friction_barrier_delta: float = 5.0
     friction_cone_reg: float = 25.0

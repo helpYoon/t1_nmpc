@@ -157,7 +157,8 @@ def run_wb_walk_croco(duration_s: float = 12.0, vx: float = 0.3,
             if res.status != 0:
                 n_solver_failures += 1
             solve_ms_list.append(mpc.last_solve_s * 1e3)
-            cmd = to_joint_command_wb(res, cfg, mpc.model, sample_ahead_s=sample_ahead_s)
+        # U2: resample the command at the LIVE clock every control tick (march along the plan)
+        cmd = to_joint_command_wb(res, cfg, mpc.model, sample_ahead_s=sample_ahead_s, t_now=transport.now())
 
         transport.write_command(cmd)
 
