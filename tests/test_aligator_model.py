@@ -1,7 +1,9 @@
 import numpy as np
+import pytest
 from t1_nmpc.wb.config_wb import make_wb_config
 from t1_nmpc.wb.aligator_model import build_aligator_model, nominal_stand_x, make_ode
 
+@pytest.mark.filterwarnings("ignore:already registered:RuntimeWarning")  # pinocchio DeprecatedBool binding registration
 def test_faithful_model_dims_and_dynamics():
     am = build_aligator_model(make_wb_config())
     assert am.nq == 34 and am.nv == 33 and am.ndx == 66

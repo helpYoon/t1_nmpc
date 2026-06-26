@@ -12,7 +12,7 @@ from .model_wb import _HEAD_JOINTS, MPC_JOINT_NAMES, CONTACT_FRAME_NAMES, CONTAC
 class AligatorModel:
     model: object
     space: object
-    foot_ids: list
+    foot_ids: list[int]
     mass: float
     nq: int
     nv: int
@@ -31,8 +31,12 @@ def build_aligator_model(wb_cfg) -> AligatorModel:
     return AligatorModel(model, space, foot_ids, mass, model.nq, model.nv, space.ndx)
 
 def make_ode(am: AligatorModel, contact_flags, FS: int = 6):
-    cs = pin.StdVec_Bool(); [cs.append(bool(b)) for b in contact_flags]
-    ci = pin.StdVec_Index(); [ci.append(int(i)) for i in am.foot_ids]
+    cs = pin.StdVec_Bool()
+    for b in contact_flags:
+        cs.append(bool(b))
+    ci = pin.StdVec_Index()
+    for i in am.foot_ids:
+        ci.append(int(i))
     return dynamics.KinodynamicsFwdDynamics(am.space, am.model, np.array([0., 0., -9.81]), cs, ci, FS)
 
 def nominal_stand_x(am: AligatorModel, wb_cfg) -> np.ndarray:
