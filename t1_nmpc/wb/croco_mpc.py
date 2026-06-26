@@ -83,21 +83,27 @@ class CrocoMPC:
         if command is not None:
             from .reference_wb import filter_command
             self._comm = filter_command(self._comm, command)
-        self._t_gait += float(self.cfg.dt)               # advance gait clock one control dt
-        prob = self.builder.build_walk_problem(x66, self._t_gait, self._comm, self.gait, np.asarray(x_meas_68, float))
+        # FIX 1: gait clock tracks real sim time, not self-increment
+        t_gait = float(t)
+        self._t_gait = t_gait
+        prob = self.builder.build_walk_problem(x66, t_gait, self._comm, self.gait, np.asarray(x_meas_68, float))
         self.solver = crocoddyl.SolverIntro(prob); self.solver.setCallbacks([])
-        # re-quasiStatic: dimension-safe across nu changes (single-support vs double-support)
-        us = list(prob.quasiStatic([x66.copy() for _ in range(self.N)]))
-        # rollout produces a gap-free (feasible) xs from the quasiStatic us, so we can
-        # pass isFeasible=True to the solver and get isFeasible=True after 1 RTI step
-        xs = list(prob.rollout(us))                      # N+1 feasible states
+        # FIX 2: RTI warm-start shift from previous solution; fall back to quasiStatic on
+        # first call or after a nu-change (e.g. stand->walk transition changes force dimension)
+        try:
+            us = self._us[1:] + [self._us[-1]]              # receding-horizon shift
+            xs = list(prob.rollout(us))                      # gap-free xs from shifted us
+        except Exception:
+            # dimension mismatch on first call or after reset: fall back to quasiStatic
+            us = list(prob.quasiStatic([x66.copy() for _ in range(self.N)]))
+            xs = list(prob.rollout(us))
         t0 = time.perf_counter(); self.solver.solve(xs, us, self.max_iter, True, _REG)
         self.last_solve_s = time.perf_counter() - t0
-        self._xs = list(self.solver.xs); self._us = list(self.solver.us)
+        self._xs = list(self.solver.xs); self._us = list(self.solver.us)    # carryover for next cycle
         xs_arr = np.asarray(self.solver.xs)
         ok = bool(np.all(np.isfinite(xs_arr)) and self.solver.isFeasible)
         x_traj = np.zeros((self.N + 1, 68)); x_traj[:, :66] = xs_arr
-        u_traj = self._acados_layout_walk(self.solver.us, self._t_gait)
+        u_traj = self._acados_layout_walk(self.solver.us, t_gait)
         if not ok:
             x_traj[:] = x_traj[0]; u_traj = np.zeros((self.N, 40))
         return MPCResult(x_traj=x_traj, u_traj=u_traj, feasible=ok, solve_time=self.last_solve_s,
