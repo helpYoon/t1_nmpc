@@ -15,7 +15,11 @@
   PYTHONPATH= LD_LIBRARY_PATH=$HOME/acados/lib ACADOS_SOURCE_DIR=$HOME/acados \
   OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 conda run -n t1mpc <args>
   ```
-- **Regression gate (the test that governs every task):** `python -m pytest tests/ -q -p no:cacheprovider` must report **`51 passed, 1 xfailed`** after Task 1 and at the end of every task thereafter. The 1 xfail is the Phase-2 lateral-balance gate (known-open) — it must stay xfailed, never xpassed or failed.
+- **Structural gate (governs every task — runtime tests are INTENTIONALLY SKIPPED per user direction):** the walk is known-broken and runtime correctness is explicitly out of scope; this task delivers *clean structure only*. **Wherever a task step below says "run the regression gate" or invokes `pytest`, do NOT run pytest.** Instead run the two static checks:
+  1. **Grep-clean** — the per-task `grep` already specified in each task must produce **no output** (proves no dangling reference to a deleted/renamed module).
+  2. **Compile check** — `PYTHONPATH= conda run -n t1mpc python -m compileall -q t1_nmpc sim tests` must exit 0 (proves every file still parses; no heavy imports, no test execution).
+  - **Final import smoke (end of Task 4 only):** `PYTHONPATH= conda run -n t1mpc python -c "import t1_nmpc.wb.mpc, t1_nmpc.wb.state, t1_nmpc.wb.ocp, t1_nmpc.wb.ode, t1_nmpc.wb.dynamics, t1_nmpc.runtime.mujoco_transport, sim.walk; print('import OK')"` must print `import OK` (confirms the live import graph resolves — module imports only, runs no MPC).
+  - Test files are still renamed/deleted as specified (they are part of the structure) — they are just never executed.
 - **Behavior-preserving only.** No change to any cost weight, gait timing, solver knob, terminal weight, Baumgarte gain, or numeric constant. Surviving test bodies stay byte-identical except for import paths.
 - **Spec:** `docs/superpowers/specs/2026-06-26-clean-base-design.md`. Read it before starting.
 - **Use `git mv` / `git rm`** (not raw `mv`/`rm`) so history follows renames.
