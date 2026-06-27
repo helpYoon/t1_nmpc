@@ -66,8 +66,10 @@ class AligatorMPC:
     def step(self, x_meas, t: float) -> MPCResult:
         x = np.asarray(x_meas, dtype=np.float64)
         if self._is_walk:
-            # advance the ring by one knot: append the stage for the new horizon tip,
-            # then rotate the solver's warm buffers (primals AND duals) to match.
+            # advance the ring by one knot: replaceStageCircular + self.handles rotation +
+            # cycleProblem shift the problem and the solver's internal data; the carried
+            # self._warm lists are passed to run as-is (their alignment across cycled
+            # heterogeneous stages is a follow-up-walk-plan concern).
             tip_t = t + self.cfg.nodes * self.cfg.dt
             tip_stage, tip_handles = self.builder.build_stage(self.gait.mode_at(tip_t))
             self.problem.replaceStageCircular(tip_stage)
