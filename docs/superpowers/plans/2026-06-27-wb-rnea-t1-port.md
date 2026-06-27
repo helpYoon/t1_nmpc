@@ -34,7 +34,7 @@
 **Files:**
 - Create: `t1_nmpc/robot/assets/t1_description/urdf/t1.urdf`, `t1_nmpc/robot/assets/t1_description/meshes/*.STL` (30 files)
 - Rewrite: `t1_nmpc/robot/config.py`
-- Delete: `t1_nmpc/wb/ode.py`, `t1_nmpc/wb/swing.py`, `t1_nmpc/wb/execution.py`, `t1_nmpc/wb/dynamics.py`, `t1_nmpc/wb/gait.py`, `t1_nmpc/wb/ocp.py`, `t1_nmpc/wb/mpc.py`, `t1_nmpc/wb/state.py`, `t1_nmpc/robot/model.py`, `t1_nmpc/robot/execution.py`, `sim/walk.py`, `sim/state.py`, and all `tests/test_*.py` (every existing test targets the deleted aligator code)
+- Delete: `t1_nmpc/wb/ode.py`, `t1_nmpc/wb/swing.py`, `t1_nmpc/wb/execution.py`, `t1_nmpc/wb/dynamics.py`, `t1_nmpc/wb/gait.py`, `t1_nmpc/wb/ocp.py`, `t1_nmpc/wb/mpc.py`, `t1_nmpc/wb/state.py`, `t1_nmpc/wb/config.py` (old aligator WBConfig/AligatorConfig — orphaned), `t1_nmpc/robot/model.py`, `t1_nmpc/robot/execution.py`, `t1_nmpc/runtime/mujoco_transport.py`, `t1_nmpc/runtime/sdk_transport.py` (both import the deleted `wb.config`/`sim.state`; aligator-coupled, unused by the stand path), `sim/walk.py`, `sim/state.py`, and all `tests/test_*.py` (every existing test targets the deleted aligator code). **Keep** `runtime/transport.py` (Protocol; imports only `JointCommand`, which survives) and `tests/conftest.py`.
 - Test: `tests/test_config.py`
 
 **Interfaces:**
@@ -209,12 +209,14 @@ class JointCommand:
 cd /home/yoonwoo/humanoid_mpc_ws/src/t1_nmpc
 git rm t1_nmpc/wb/ode.py t1_nmpc/wb/swing.py t1_nmpc/wb/execution.py \
        t1_nmpc/wb/dynamics.py t1_nmpc/wb/gait.py t1_nmpc/wb/ocp.py \
-       t1_nmpc/wb/mpc.py t1_nmpc/wb/state.py \
+       t1_nmpc/wb/mpc.py t1_nmpc/wb/state.py t1_nmpc/wb/config.py \
        t1_nmpc/robot/model.py t1_nmpc/robot/execution.py \
+       t1_nmpc/runtime/mujoco_transport.py t1_nmpc/runtime/sdk_transport.py \
        sim/walk.py sim/state.py
 git rm tests/test_*.py
 ```
-Then blank `t1_nmpc/wb/__init__.py` to an empty file (`: > t1_nmpc/wb/__init__.py`) and confirm `runtime/mujoco_transport.py` / `runtime/sdk_transport.py` do not import any deleted symbol (if they do, comment those imports with `# rewritten in wb-rnea port`).
+Then blank `t1_nmpc/wb/__init__.py` to an empty file (`: > t1_nmpc/wb/__init__.py`), and edit `t1_nmpc/runtime/__init__.py` so it imports **only** surviving symbols (it must not import the deleted `mujoco_transport`/`sdk_transport`; keep only the `transport` Protocol if referenced). Verify the package imports clean:
+`PYTHONPATH= conda run -n t1mpc python -c "import t1_nmpc, t1_nmpc.runtime.transport, sim.mujoco_runtime; print('import OK')"` → prints `import OK`.
 
 - [ ] **Step 4: Write the failing config test** — `tests/test_config.py`
 
