@@ -1,305 +1,147 @@
-"""MPCConfig: all Booster T1 numbers, ported from wb_humanoid_mpc .info files.
+"""MPCConfig: Booster T1 numbers for the whole_body_rnea (CasADi+Fatrop) controller.
 
-Sources (single source of truth — do not edit numbers here without re-checking):
-  task.info       — Q, R, Q_final, task_space_costs, foot_constraint, swing_trajectory_config,
-                    contacts, jointLimits, collision_constraint, joint_pd_gains, multiple_shooting, mpc
-  reference.info  — defaultJointState, defaultBaseHeight, vel/height/pitch envelope
-  gait.info       — walk mode_sequence / switching_times (cycle_period 1.4)
-  contract §A.5   — joint order + URDF lower/upper limits
-"""
+Geometry/pose/limits trace to t1_controller (data only, not formulation). Weights are
+re-dimensioned to T1's 29 joints (NOT traced to t1_controller — logged as a divergence)."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Tuple
 
 import numpy as np
 
-# ---- index slices (the law; §"Key cross-file invariants") ----
-MOM = slice(0, 6)        # normalized centroidal momentum
-BASE = slice(6, 12)      # base pose (p_xyz, theta_zyx)
-JOINTS = slice(12, 41)   # 29 joint angles (state) / joint velocities (input)
-WRENCH_L = slice(0, 6)   # left-foot wrench (input)
-WRENCH_R = slice(6, 12)  # right-foot wrench (input)
-QDJ = slice(12, 41)      # joint-velocity block of the input
+_ASSETS = os.path.join(os.path.dirname(__file__), "assets")
+T1_URDF_PATH = os.path.join(_ASSETS, "t1_description", "urdf", "t1.urdf")
+T1_PACKAGE_DIRS = (_ASSETS,)  # so 'package://t1_description/...' resolves
 
-
-# ===== concrete §B.9 vectors (built once, reused) =====
-
-def _Q_joints() -> np.ndarray:
-    # task.info Q joint block (state idx 12..40), scaling 1e0
-    return np.array(
-        [1, 1, 10, 20, 2, 2, 1, 1, 1,        # head(2) + L-arm(7)
-         10, 20, 2, 2, 1, 1, 1,              # R-arm(7)
-         0.5,                                # waist
-         0.02, 0.06, 1.0, 0.02, 0.01, 0.01,  # L-leg
-         0.02, 0.06, 1.0, 0.02, 0.01, 0.01], # R-leg
-        dtype=np.float64,
-    )
-
-
-def _build_Q() -> np.ndarray:
-    Q = np.zeros(41, dtype=np.float64)
-    Q[0:6] = [8, 8, 15, 0, 0, 4]      # momentum
-    Q[6:12] = [0, 0, 15, 0, 2, 2]     # base pose
-    Q[12:41] = _Q_joints()
-    return Q  # task.info scaling 1e0 → already final
-
-
-def _build_R() -> np.ndarray:
-    R = np.zeros(41, dtype=np.float64)
-    wrench = np.array([0.05, 0.05, 0.01, 0.05, 0.05, 0.2], dtype=np.float64)
-    R[0:6] = wrench
-    R[6:12] = wrench
-    jv = np.array(
-        [100, 100, 200, 100, 100, 100, 100, 100, 100,
-         200, 100, 100, 100, 100, 100, 100, 100,
-         20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20],
-        dtype=np.float64,
-    )
-    R[12:41] = jv
-    return R * 1e-3  # task.info R scaling 1e-3
-
-
-def _build_Q_final() -> np.ndarray:
-    Qf = np.zeros(41, dtype=np.float64)
-    Qf[0:6] = [25, 25, 25, 0, 0, 25]
-    Qf[6:12] = [0, 0, 20, 0, 2, 2]
-    Qf[12:41] = _Q_joints()  # joint block identical to Q
-    return Qf  # scaling 1e0
-
-
-def _build_kp() -> np.ndarray:
-    return np.array(
-        [20, 20] + [20] * 14 + [200] +
-        [200, 200, 200, 200, 50, 50] +
-        [200, 200, 200, 200, 50, 50],
-        dtype=np.float64,
-    )
-
-
-def _build_kd() -> np.ndarray:
-    return np.array(
-        [0.2, 0.2] + [0.5] * 14 + [5.0] +
-        [5, 5, 5, 5, 3, 3] + [5, 5, 5, 5, 3, 3],
-        dtype=np.float64,
-    )
-
-
-def _build_nominal_joint_pos() -> np.ndarray:
-    # reference.info defaultJointState, §A.5 order
-    return np.array(
-        [0, 0, 0.5, -1.0, 0, -1.4, 0, 0, 0,
-         0.5, 1.0, 0, 1.4, 0, 0, 0, 0,
-         -0.20, 0, 0, 0.40, -0.20, 0,
-         -0.20, 0, 0, 0.40, -0.20, 0],
-        dtype=np.float64,
-    )
-
-
-def _build_torso_task_weights() -> np.ndarray:
-    # order: pos(3), ori(3), linvel(3), angvel(3), linacc(3), angacc(3)
-    return np.array(
-        [0, 0, 0,
-         100, 100, 0,
-         0.1, 0.1, 0.005,
-         5, 5, 2,
-         0, 0, 0,
-         0, 0, 0],
-        dtype=np.float64,
-    )
-
-
-def _build_swing_foot_task_weights() -> np.ndarray:
-    return np.array(
-        [0, 0, 0,
-         1000, 1000, 0,
-         10, 10, 0,
-         1, 1, 0.005,
-         0, 0, 0,
-         0, 0, 0],
-        dtype=np.float64,
-    )
-
-
-def _build_leg_torque_weights() -> np.ndarray:
-    # [hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll] * 1e-4
-    return np.array([2, 2, 1, 8, 0.2, 0.2], dtype=np.float64) * 1e-4
-
-
-# §A.5 URDF joint limits, in the 29-joint order
-_JOINT_LOWER = np.array(
-    [-1.57, -0.35, -3.29, -1.577, -2.234, -2.1402, -2.5821, -1.8185, -1.3614,
-     -3.29, -1.7055, -2.234, -1.6844, -2.5821, -1.4261, -1.4285,
-     -1.57,
-     -1.8, -0.3, -1.0, 0.0, -0.87, -0.44,
-     -1.8, -1.57, -1.0, 0.0, -0.87, -0.44],
-    dtype=np.float64,
+# §A.5 / pinocchio joint order: [head2, Larm7, Rarm7, waist1, Lleg6, Rleg6]
+JOINT_NAMES: Tuple[str, ...] = (
+    "AAHead_yaw", "Head_pitch",
+    "Left_Shoulder_Pitch", "Left_Shoulder_Roll", "Left_Elbow_Pitch", "Left_Elbow_Yaw",
+    "Left_Wrist_Pitch", "Left_Wrist_Yaw", "Left_Hand_Roll",
+    "Right_Shoulder_Pitch", "Right_Shoulder_Roll", "Right_Elbow_Pitch", "Right_Elbow_Yaw",
+    "Right_Wrist_Pitch", "Right_Wrist_Yaw", "Right_Hand_Roll",
+    "Waist",
+    "Left_Hip_Pitch", "Left_Hip_Roll", "Left_Hip_Yaw", "Left_Knee_Pitch",
+    "Left_Ankle_Pitch", "Left_Ankle_Roll",
+    "Right_Hip_Pitch", "Right_Hip_Roll", "Right_Hip_Yaw", "Right_Knee_Pitch",
+    "Right_Ankle_Pitch", "Right_Ankle_Roll",
 )
-_JOINT_UPPER = np.array(
-    [1.57, 1.22, 1.18, 1.7055, 2.234, 1.6844, 2.5821, 1.4261, 1.4285,
-     1.1868, 1.577, 2.234, 2.1402, 2.5821, 1.8185, 1.3614,
-     1.57,
-     1.57, 1.57, 1.0, 2.34, 0.35, 0.44,
-     1.57, 0.3, 1.0, 2.34, 0.35, 0.44],
-    dtype=np.float64,
-)
+ANKLE_ROLL_FRAMES = ("Left_Ankle_Roll", "Right_Ankle_Roll")
+
+
+def _nominal_joint_pos() -> np.ndarray:
+    return np.array(
+        [0, 0]
+        + [0.5, -1.0, 0, -1.4, 0, 0, 0]
+        + [0.5, 1.0, 0, 1.4, 0, 0, 0]
+        + [0]
+        + [-0.05, 0, 0, 0.10, -0.05, 0]
+        + [-0.05, 0, 0, 0.10, -0.05, 0],
+        dtype=np.float64,
+    )
+
+
+def _kp() -> np.ndarray:
+    return np.array(
+        [20, 20] + [20] * 14 + [200]
+        + [200, 200, 200, 200, 50, 50]
+        + [200, 200, 200, 200, 50, 50], dtype=np.float64)
+
+
+def _kd() -> np.ndarray:
+    return np.array(
+        [0.2, 0.2] + [0.5] * 14 + [5.0]
+        + [5, 5, 5, 5, 3, 3] + [5, 5, 5, 5, 3, 3], dtype=np.float64)
+
+
+def _Q_diag() -> np.ndarray:
+    # state delta weights, ndx=70 = [base_pos(6), joint_pos(29), base_vel(6), joint_vel(29)]
+    base_pos = np.array([0, 0, 1000, 10000, 10000, 0], dtype=np.float64)   # x,y,yaw free
+    joint_pos = np.concatenate([
+        [50, 50], [100] * 14, [200],
+        [300] * 6, [300] * 6,
+    ])
+    base_vel = np.array([2000, 2000, 1000, 1000, 1000, 2000], dtype=np.float64)
+    joint_vel = np.concatenate([[10, 10], [10] * 14, [10], [2] * 6, [2] * 6])
+    return np.concatenate([base_pos, joint_pos, base_vel, joint_vel])
+
+
+def _R_diag() -> np.ndarray:
+    # input weights for the FULL width (na+nf+nj = 88): [a(35), forces(24), tau_j(29)]
+    return np.concatenate([
+        [1e-3] * 35,
+        [5e-4] * 24,
+        [1e-4] * 2, [1e-2] * 14, [1e-3], [1e-4] * 12,
+    ])
 
 
 @dataclass(frozen=True)
 class MPCConfig:
-    # --- dimensions / horizon ---
-    N: int = 60
-    dt: float = 0.02
-    T: float = 1.2
-    nx: int = 41
-    nu: int = 41
+    # dimensions / horizon
+    nodes: int = 14
+    tau_nodes: int = 3
+    dt_min: float = 0.02
+    dt_max: float = 0.06
     n_joints: int = 29
-    n_contacts: int = 2
-    nq: int = 35
+    nq: int = 36
     nv: int = 35
+    nx: int = 71
+    ndx: int = 70
+    n_corners: int = 8
+    nf: int = 24
+    na: int = 35
 
-    # --- cost weights (diagonal, full length) ---
-    Q: np.ndarray = field(default_factory=_build_Q)
-    R: np.ndarray = field(default_factory=_build_R)
-    Q_final: np.ndarray = field(default_factory=_build_Q_final)
-    terminal_scale: float = 3.0
+    # nominal stand
+    nominal_base_height: float = 0.6734
+    nominal_joint_pos: np.ndarray = field(default_factory=_nominal_joint_pos)
+    robot_mass: float = 34.5135   # reference; the live value comes from the model
 
-    # --- task-space cost weights ---
-    torso_task_weights: np.ndarray = field(default_factory=_build_torso_task_weights)
-    swing_foot_task_weights: np.ndarray = field(default_factory=_build_swing_foot_task_weights)
-    leg_torque_weights: np.ndarray = field(default_factory=_build_leg_torque_weights)
+    # corner geometry (ankle-frame offsets)
+    corner_x: Tuple[float, float] = (-0.1015, 0.1115)
+    corner_y: Tuple[float, float] = (-0.05, 0.05)
+    corner_z: float = -0.030
 
-    # --- gait params ---
-    gait_name: str = "walk"
-    cycle_period: float = 1.4
-    speed_band_thresholds: np.ndarray = field(
-        default_factory=lambda: np.array([0.05, 0.8], dtype=np.float64)
-    )
-    speed_band_names: Tuple[str, ...] = ("stance", "walk", "fast_walk")
-    speed_band_hysteresis: float = 0.05
-
-    # --- swing params ---
-    swing_height: float = 0.08
-    lift_off_velocity: float = 0.05
-    touch_down_velocity: float = -0.0
-    touch_down_height_offset: float = -0.001
-    swing_time_scale: float = 0.4
-    impact_prox_liftoff_vel: float = -0.15
-    impact_prox_touchdown_vel: float = 0.3
-    impact_prox_midpoint_value: float = 0.0
-
-    # --- foot-constraint feedback gains ---
-    foot_pos_err_gain_z: float = 5.0
-    foot_ori_err_gain: float = 20.0
-    foot_linvel_err_gain_z: float = 1.0
-    foot_linvel_err_gain_xy: float = 1.0
-    foot_angvel_err_gain: float = 1.0
-
-    # --- per-joint PD gains ---
-    kp: np.ndarray = field(default_factory=_build_kp)
-    kd: np.ndarray = field(default_factory=_build_kd)
-
-    # --- robot / geometry ---
-    robot_mass: float = 34.5135
-    nominal_base_height: float = 0.62
-    nominal_trunk_pitch: float = 0.0
-    contact_frame_offset: np.ndarray = field(
-        default_factory=lambda: np.array([0.01, 0.0, -0.027], dtype=np.float64)
-    )
-    foot_rect_x: Tuple[float, float] = (-0.10, 0.10)
-    foot_rect_y: Tuple[float, float] = (-0.045, 0.045)
-
-    # --- friction / barrier ---
+    # friction
     friction_mu: float = 0.4
-    friction_barrier_mu: float = 0.2
-    friction_barrier_delta: float = 5.0
-    friction_cone_reg: float = 25.0  # softening reg in sqrt(fx^2+fy^2+reg) (src FrictionForceConeConstraint)
-    cop_barrier_mu: float = 0.6
-    cop_barrier_delta: float = 0.03
-    joint_limit_barrier_mu: float = 1200.0
-    joint_limit_barrier_delta: float = 0.1
-    joint_lower: np.ndarray = field(default_factory=lambda: _JOINT_LOWER.copy())
-    joint_upper: np.ndarray = field(default_factory=lambda: _JOINT_UPPER.copy())
-    collision_foot_sphere_r: float = 0.055
-    collision_knee_sphere_r: float = 0.065
-    collision_barrier_mu: float = 30000.0
-    collision_barrier_delta: float = 0.05
 
-    # --- velocity command scaling / clamps ---
-    cmd_scale_vx: float = 2.0
-    cmd_scale_vy: float = 1.0
-    cmd_scale_wz: float = 1.0
-    max_vx: float = 2.0
-    max_vy: float = 1.0
-    max_wz: float = 1.0
-    max_delta_height: float = 0.3
-    max_trunk_pitch: float = 1.5
-    cmd_filter_break_freq_hz: float = 5.0
+    # weights
+    Q_diag: np.ndarray = field(default_factory=_Q_diag)
+    R_diag: np.ndarray = field(default_factory=_R_diag)
 
-    # --- nominal posture ---
-    nominal_joint_pos: np.ndarray = field(default_factory=_build_nominal_joint_pos)
+    # per-joint PD
+    kp: np.ndarray = field(default_factory=_kp)
+    kd: np.ndarray = field(default_factory=_kd)
 
-    # --- solver ---
-    solver_backend: str = "clarabel"
-    sqp_iterations: int = 1
-    delta_tol: float = 1e-4
-    warm_start: bool = True
-    cold_start: bool = False
+    # Fatrop options (single max_iter cap; warm-started ticks converge well under it)
+    fatrop_max_iter: int = 50
+    fatrop_tol: float = 1e-3
+    fatrop_mu_init: float = 1e-4
 
-    # --- execution rates ---
-    mpc_hz: float = 40.0
+    # execution rates
+    mpc_hz: float = 50.0
     control_hz: float = 500.0
     physics_hz: float = 2000.0
 
 
 def make_config(**overrides) -> MPCConfig:
-    """Construct the canonical T1 MPCConfig, with optional field overrides.
-
-    All arrays are validated for shape/dtype before return so a typo in an
-    override surfaces immediately rather than deep in the QP assembly.
-    """
     cfg = MPCConfig(**overrides)
-    _validate(cfg)
+    assert cfg.nx == cfg.nq + cfg.nv == 71
+    assert cfg.ndx == 2 * cfg.nv == 70
+    assert cfg.nf == 3 * cfg.n_corners == 24
+    assert cfg.na == cfg.nv
+    assert cfg.nominal_joint_pos.shape == (29,)
+    assert cfg.Q_diag.shape == (cfg.ndx,)
+    assert cfg.R_diag.shape == (cfg.na + cfg.nf + cfg.n_joints,)
+    assert cfg.kp.shape == (29,) and cfg.kd.shape == (29,)
     return cfg
-
-
-# Aliases so every phase's tests resolve the same factory.
-default_config = make_config
-make_default_config = make_config
-load_config = make_config
-
-
-def _validate(cfg: MPCConfig) -> None:
-    assert cfg.nx == 41 and cfg.nu == 41
-    assert cfg.nq == 35 and cfg.nv == 35
-    assert cfg.n_joints == 29 and cfg.n_contacts == 2
-    assert abs(cfg.N * cfg.dt - cfg.T) < 1e-12, "N*dt must equal T"
-    for name, arr, n in (
-        ("Q", cfg.Q, 41), ("R", cfg.R, 41), ("Q_final", cfg.Q_final, 41),
-        ("kp", cfg.kp, 29), ("kd", cfg.kd, 29),
-        ("nominal_joint_pos", cfg.nominal_joint_pos, 29),
-        ("joint_lower", cfg.joint_lower, 29), ("joint_upper", cfg.joint_upper, 29),
-        ("torso_task_weights", cfg.torso_task_weights, 18),
-        ("swing_foot_task_weights", cfg.swing_foot_task_weights, 18),
-        ("leg_torque_weights", cfg.leg_torque_weights, 6),
-        ("contact_frame_offset", cfg.contact_frame_offset, 3),
-    ):
-        assert arr.shape == (n,), f"{name} shape {arr.shape} != ({n},)"
-        assert arr.dtype == np.float64, f"{name} dtype {arr.dtype} != float64"
-    assert np.all(cfg.joint_lower < cfg.joint_upper), "joint_lower must be < joint_upper"
-    assert len(cfg.speed_band_names) == len(cfg.speed_band_thresholds) + 1
-    assert cfg.solver_backend in ("clarabel", "proxqp", "osqp")
 
 
 @dataclass
 class JointCommand:
-    """Joint-PD command emitted to the 500 Hz layer (§B.8). All arrays length 29."""
-    q_des: np.ndarray   # (29,)
-    qd_des: np.ndarray  # (29,)
-    kp: np.ndarray      # (29,)
-    kd: np.ndarray      # (29,)
-    tau_ff: np.ndarray  # (29,)
-    # MPC contact wrenches [fx,fy,fz,Mx,My,Mz] per foot (world-aligned, at contact frame), for the
-    # inverse-dynamics feedforward computed at control rate (wb computeJointTorques). None -> no ID FF.
-    wrench_l: np.ndarray = None  # (6,)
-    wrench_r: np.ndarray = None  # (6,)
+    """29-joint command to the control layer: tau = tau_ff + kp*(q_des-q) - kd*(qd_des-qd)."""
+    q_des: np.ndarray    # (29,)
+    qd_des: np.ndarray   # (29,)
+    tau_ff: np.ndarray   # (29,)
+    kp: np.ndarray       # (29,)
+    kd: np.ndarray       # (29,)
