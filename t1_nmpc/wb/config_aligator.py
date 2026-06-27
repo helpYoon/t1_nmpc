@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 @dataclass
 class AligatorConfig:
     N: int = 20                 # horizon nodes
-    max_iters: int = 2          # ProxDDP inner-iteration budget (raise to 3-5 at transitions in Phase 2)
+    max_iters: int = 2          # ProxDDP inner-iteration budget (validated Phase-1 RT point: ~12ms)
+    max_iters_transition: int = 5  # extra budget when contact flags change at a tick (variable budget)
     max_al_iters: int = 2       # outer AL iterations
     mu_init: float = 1e-2       # AL penalty
     tol: float = 1e-3
