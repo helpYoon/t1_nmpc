@@ -41,35 +41,58 @@ AL-convergent. So the formulation choice is correct, not merely viable.
 - **Structure unchanged:** `robot/ wb/ runtime/ sim/` exactly as today.
 - **Rewrite the `wb/` controller Fatrop → aligator IN PLACE — NOT additive.** Remove the Fatrop pieces;
   do not keep them beside aligator:
-  - **Remove:** `wb/ocp.py` `StandOCP` (Fatrop `opti.to_function`), `wb/mpc.py` `WholeBodyMPC` (Fatrop),
-    the 8-corner contact model in `robot/model.py`, the Fatrop opts in `config.py`, `tools/codegen_solver.py`.
+  - **Remove (Fatrop-specific only):** `wb/ocp.py` `StandOCP` (`opti.to_function`), `wb/mpc.py`
+    `WholeBodyMPC` (Fatrop), the Fatrop opts in `config.py`, `tools/codegen_solver.py`. **Keep the
+    8-corner contact model** in `robot/model.py` (paper-faithful — see §4).
+  - **Build the aligator port FRESH** from the spike's Route-A code + the *current* Fatrop OCP's
+    formulation. **Do NOT reuse the old `aligator-port` branch** (wrong formulation: forward-kinodynamic,
+    velocity-level contact).
   - **Rewrite in place:** `wb/dynamics.py` (cpin RNEA functions for the residual), `wb/ocp.py` (aligator
     `TrajOptProblem` builder), `wb/mpc.py` (aligator `SolverProxDDP` + receding `replaceStageCircular`/
     `cycleProblem`), `wb/gait.py` (biped walk schedule), `wb/state.py` (MuJoCo↔pinocchio for the reduced
-    model), `robot/model.py` (head-locked reduced model + per-foot 6D frames), `robot/config.py`.
+    model), `robot/model.py` (head-locked reduced model + 8 corner force frames + per-foot velocity frame),
+    `robot/config.py`.
 - **M0 stand re-homes onto aligator** as the all-double-support case of the same OCP (the Fatrop stand is
   retired, its tests rewritten). One controller, one solver.
 
-## 4. The formulation (the proven recipe)
+## 4. The formulation (Fatrop port verbatim, on aligator)
 
-- **Model:** `buildReducedModel(freeflyer T1, lock AAHead_yaw + Head_pitch)` → **27 joints, nq=34, nv=33**.
-  Add one **per-foot 6D `OP_FRAME`** at each ankle-roll joint, sole offset `[0.005, 0, -0.030]`.
-  (Replaces the 29-joint / 8-corner Fatrop model.)
-- **State** `x = [q(34), v(33)]` on aligator `MultibodyPhaseSpace`. **Control** `u = [W_l(6), W_r(6), a(33)]`
-  — per-foot 6D wrench (LWA at the ankle/sole frame) **first**, then the full generalized acceleration.
-- **Dynamics:** the trivial double integrator `ẋ = [v, a]` (`DoubleIntODE` + `IntegratorSemiImplEuler`,
-  `dt=0.035`). The real dynamics enter as constraints.
-- **RNEA path constraint (every stage):** `RneaBaseResidual` — `RNEA(q, v, a, f_ext(W))[:6] == 0` (base
-  underactuation) as an `EqualityConstraintSet`. cpin StageFunction with exact autodiff Jacobians. **Joint
-  torque is recovered post-hoc** = `RNEA(...)[6:]` — **NO `tau_nodes` decision vars** (the warm-start trap).
-- **Contact (per stance foot):** `FrameVelocityResidual == 0` (Equality, LWA) + `CentroidalFrictionConeResidual`
-  + `CentroidalWrenchConeResidual` (CoP), the cones **scaled by `1/(m·g)²`** as `NegativeOrthant`
-  (load-bearing — the raw squared-magnitude cone output ~4585 wrecks AL conditioning).
-- **Solver:** `SolverProxDDP(mu_init=1e-4)`, `LQ_SOLVER_SERIAL` (the cpin residuals are Python → GIL),
+**Minimal-change principle:** the `whole_body_rnea` formulation is the **Fatrop port's, unchanged** —
+8-corner contact forces, RNEA `τ_base=0` path constraint, swing-z spline, footstep heuristic, gait,
+discretization. Swapping Fatrop→aligator forces **exactly three** small changes, each a proven consequence
+of aligator's augmented Lagrangian (not gratuitous): **(i)** contact velocity per-foot 6D, not per-corner
+(per-corner is rank-deficient — 12 eqs / 6-DOF rigid foot — *and* less paper-faithful; the paper enforces
+one velocity constraint per foot); **(ii)** swing-z as a *soft* cost, not a hard equality (hard stalls the
+AL outer loop — also the foot-lift workstream, §6.1); **(iii)** joint torque recovered *post-hoc* via RNEA,
+no `tau_nodes` decision vars (the receding shift makes `tau_nodes` a warm-start trap). Everything else is
+the Fatrop port.
+
+- **Model:** `buildReducedModel(freeflyer T1, lock AAHead_yaw + Head_pitch)` → **27 joints, nq=34, nv=33**
+  (head-lock per the standing directive). Keep the **8 corner `OP_FRAME`s** (4 per foot, the Fatrop sole
+  rectangle) for the contact forces, plus the ankle-roll/foot frame for the 6D velocity constraint.
+- **State** `x=[q(34), v(33)]` on `MultibodyPhaseSpace`. **Control** `u=[forces(24), a(33)]` — the **8
+  corner 3D contact forces** (paper-style point-contact forces; CoP emerges from the corner spread +
+  unilateral `fz≥0`), then the full generalized acceleration.
+- **Dynamics:** trivial double integrator `ẋ=[v,a]` (`DoubleIntODE` + `IntegratorSemiImplEuler`, dt=0.035).
+- **RNEA path constraint (every stage):** `RNEA(q, v, a, f_ext(8 corners))[:6] == 0` (base underactuation)
+  as an `EqualityConstraintSet` (cpin StageFunction, exact autodiff Jacobians); the 8 corner forces
+  accumulate into the shared ankle `f_ext` slot (the Fatrop RNEA already does this). Joint torque recovered
+  post-hoc = `RNEA(...)[6:]`.
+- **Contact:** per-corner friction cone `fz≥0` and `μ²fz² ≥ fx²+fy²` (`NegativeOrthant`; the 8 unilateral
+  corners give the support polygon / CoP — no separate wrench-cone); **per-foot 6D `FrameVelocityResidual
+  == 0`** for each stance foot (LWA).
+- **Swing + footstep:** swing-z as a **soft `QuadraticResidualCost`** on the Baumgarte z-velocity spline
+  (`get_spline_vel_z`); **footstep placement** (restored) — a Raibert target
+  `p_foot_xy = stance_xy + ½·T_step·v_des + k·(v_meas − v_des)` + nominal stance half-width, as a soft cost
+  on the swing foot's xy through swing. Forward command via `base_vel_des` (track `vx` in the velocity cost).
+- **Solver:** `SolverProxDDP(mu_init=1e-4)`, `LQ_SOLVER_SERIAL` (cpin residuals are Python → GIL),
   `ROLLOUT_LINEAR`; warm ticks cap `max_iters≈6`, `target_tol=1e-2` (mirroring `g_max=1e-2`, `g_min=1e-6`).
-- **Receding warm carry:** `replaceStageCircular(tip @ gait_t = t + N·dt)` then `cycleProblem(...)` *before*
-  the solve; **shift `xs/us` by one knot, carry `vs/lams` UNSHIFTED** (cycleProblem cycles the internal
-  duals; wrongly shifting them diverges to CV~33).
+- **Receding warm carry:** `replaceStageCircular(tip @ gait_t = t+N·dt)` then `cycleProblem(...)` *before*
+  the solve; **shift `xs/us` one knot, carry `vs/lams` UNSHIFTED** (wrongly shifting duals diverges to CV~33).
+
+*(The warm-start gate was proven with per-foot 6D wrench forces; with the 8-corner forces it should still
+hold — warm-start is carried by RNEA + the per-foot velocity constraint + the solver, insensitive to the
+force representation — but the plan's first task re-confirms the gate with the 8-corner model.)*
 
 ## 5. Discretization & gait
 
@@ -103,12 +126,15 @@ The spike resolved the **solver/formulation foundation**; the *locomotion* is no
 robot/
   config.py   rewrite: head-locked 27-joint dims, per-foot frame geometry, gait, aligator solver params,
               g_max/g_min, weights. (remove Fatrop opts.)
-  model.py    rewrite: buildReducedModel(lock head) + 2 per-foot 6D OP_FRAMEs + mass. (remove 8 corners.)
+  model.py    rewrite: buildReducedModel(lock head) + KEEP 8 corner OP_FRAMEs (forces) + a per-foot frame
+              (6D velocity) + mass.
 wb/
-  dynamics.py rewrite: cpin RNEA functions (base-6 residual + Jacobians + post-hoc torque); swing-z cpin fn.
+  dynamics.py rewrite: cpin RNEA functions (base-6 residual w/ 8 accumulated corner forces + Jacobians +
+              post-hoc torque); swing-z cpin fn.
   ocp.py      rewrite: aligator TrajOptProblem builder — DoubleIntODE + IntegratorSemiImplEuler, the
-              RneaBaseResidual EqualityConstraintSet, stance FrameVelocityResidual, scaled friction/wrench
-              cones, soft swing-z cost, tracking cost; per-stage by gait flags. (remove StandOCP/Fatrop.)
+              RneaBaseResidual EqualityConstraintSet, per-corner friction cones (8), per-foot 6D
+              FrameVelocityResidual, soft swing-z cost, footstep cost, tracking cost; per-stage by gait
+              flags. (remove StandOCP/Fatrop.)
   mpc.py      rewrite: AligatorMPC — SolverProxDDP(serial), reset (cold), step (warm via
               replaceStageCircular+cycleProblem, xs/us shift, vs/lams carry), command extraction. (remove
               WholeBodyMPC/to_function.)
@@ -142,11 +168,12 @@ tools/codegen_solver.py  REMOVE (Fatrop-only, impractical).
 
 - Solver: aligator ProxDDP (AL-DDP) — replaces the Fatrop port; chosen because IPM cannot warm-start the
   receding walk and acados cannot carry the hard stagewise equality.
-- Contact: **per-foot 6D wrench** (FrameVelocity + scaled wrench/friction cones), replacing the 8-corner
-  3D-force model.
-- Cone residuals **scaled by `1/(m·g)²`** for AL conditioning (verify the scaled cone still enforces the
-  physical friction/CoP limits; pick the scale deliberately).
-- **Swing-z soft** (cost) for now, not a hard equality (hard stalls AL — the foot-lift open problem).
+- **8-corner 3D contact force model KEPT** (paper-faithful). Only the contact *velocity* constraint moves to
+  **per-foot 6D** (one `FrameVelocity==0` per foot), replacing the Fatrop port's per-corner velocity
+  (rank-deficient — and the paper itself is per-foot).
+- **Swing-z soft** (cost), not a hard equality (hard stalls AL — the foot-lift open problem).
+- **Torque post-hoc** via RNEA, no `tau_nodes` decision vars (warm-start trap); torque limits, if needed,
+  as soft penalties (a paper divergence to revisit).
 - **Head locked always** (27-joint model); arms locked for the first walk.
 
 ## 11. Scope / risks
