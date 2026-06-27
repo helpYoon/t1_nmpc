@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 .acados_wb*/
 *.npz
+debug_fatrop_*.mtx

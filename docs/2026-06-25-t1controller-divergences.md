@@ -93,3 +93,21 @@ The previous §5 — *"the walk failure is not traceable to a faithfulness gap, 
 ## 5. Bottom line
 
 The port is **faithful on the problem** (§1) on every dimension that defines the OCP structure. The remaining divergences are concentrated in (a) data/convention bugs now fixed (B1–B6) and (b) the **solver/timing layer** (D1, D2, D-JL), where acados ≠ OCS2 forces a different mechanism. D4 (event-aligned grid) was implemented this session — verified-correct, faithful, and M0-safe — but the walk still falls (the n_fail "improvement" was fall-noise, not robust). **D1 (un-projected single-RTI conditioning) is now the leading remaining suspect** and the next lever to close.
+
+---
+
+## 6. wb-rnea (CasADi/Fatrop) port divergences — added 2026-06-27
+
+This section records divergences introduced by the **wb-rnea backend** (branch `wb-rnea-port`),
+which replaces the aligator/ProxDDP controller with a direct-transcription NLP (CasADi `Opti` +
+Fatrop) ported from wb-mpc-locoman (Molnar et al., RA-L 2025). The formulation authority is now
+wb-mpc-locoman applied to T1; `t1_controller` is a data source only.
+
+| # | Component | t1_controller (OCS2) | wb-rnea port | Status |
+|---|---|---|---|---|
+| **W1** | Contact model | Single 6D wrench per foot + CoP/wrench-cone (`nf=12`) | **8 unilateral 3D corner forces** per robot, 4 per foot (`nf=24`); each corner `f_z ≥ 0` inside friction cone | Deliberate — reuses wb-mpc-locoman point-force machinery; reconstructs 6D foot wrench with CoP inside support rectangle |
+| **W2** | Friction coefficient μ | `μ=0.4` (hardware value from `task.info`) | **`μ=0.4`** (retained from t1_controller) | Faithful on μ; wb-mpc-locoman's `μ=0.9` was NOT adopted |
+| **W3** | Solver | OCS2 SQP/HPIPM (single-RTI, null-space-projected); prior aligator ProxDDP | **Fatrop interior-point NLP** via CasADi `Opti.solver('fatrop')` | Deliberate — Fatrop is the formulation choice for wb-rnea; OCS2/aligator paths removed |
+| **W4** | Joints in OCP | OCS2 fixes the 2 head joints (27-DOF) | **All 29 joints retained** in the OCP (MuJoCo parity); head joints are decision variables | Deliberate — full parity with MuJoCo `nu=29`; head can be cheaply regulated by weight tuning |
+| **W5** | Q/R weights | Diagonal weights in `task.info`, term-by-term verified for the acados port | **Re-dimensioned and retuned for T1's 29-joint FreeFlyer tree** (arm/waist/leg/head weighting); **NOT traced to t1_controller** | Explicit divergence — stand weights are plausible but uncited; must be re-grounded before any walking milestone |
+| **W6** | Joint pos/vel limits | OCS2 soft two-sided polynomial barrier (μ1200/δ0.1) on 27 joints | **Deliberately omitted at stand** (box bounds commented out); deferred to walking | Deliberate deferral — limits are non-critical for stand; must be added before walking/hardware |

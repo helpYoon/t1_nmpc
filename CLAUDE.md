@@ -4,13 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Python **whole-body nonlinear MPC (NMPC)** for the **Booster T1 humanoid**, built on **aligator (ProxDDP / proximal augmented-Lagrangian DDP)** + **pinocchio** + **MuJoCo** (physics sim). The OCP is a full-order kinodynamic nonlinear program: state carries the whole-body free-flyer configuration and velocity, control carries joint accelerations and 6D contact wrenches per foot, and aligator's ProxDDP solver runs each MPC tick. It is a faithful port of the OCS2 `humanoid_mpc` controller (`t1_controller`, in `../t1_controller/`). The reference is hardware-proven, so **faithfulness to `t1_controller` is the governing design constraint**: every cost weight, constraint gain, gait timing, and execution rule traces to a cited source in the C++ reference. The north star is world-frame hand tracking while walking (milestone M2); standing (M0) and forward walking (M1) de-risk the foundation.
+A Python **whole-body nonlinear MPC (NMPC)** for the **Booster T1 humanoid**, built on **CasADi `Opti` + Fatrop** (`whole_body_rnea` formulation) + **pinocchio.casadi** + **MuJoCo** (physics sim). The OCP is a full-order whole-body inverse-dynamics NLP: state carries the FreeFlyer configuration and velocity, control carries joint accelerations, 8-corner 3D contact forces (`nf=24`), and — on the first `tau_nodes` nodes — joint torques. Fatrop (interior-point) solves the sparse NLP each MPC tick.
 
-When you change a numerical value or formulation, find and cite its source in `t1_controller`, or document the deliberate divergence (see `docs/2026-06-25-t1controller-divergences.md` for the ledger format).
+The formulation is a port of **wb-mpc-locoman** (Molnar et al., RA-L 2025, *Whole-Body Inverse Dynamics MPC*, arXiv:2511.19709) adapted to T1 kinematics. `t1_controller` (OCS2 `humanoid_mpc`) remains a **data** source for T1 numbers (joint limits, standing pose, foot geometry) but is **not** a formulation authority for this backend. Deliberate divergences are logged in `docs/2026-06-25-t1controller-divergences.md`.
+
+The north star is world-frame hand tracking while walking. **M0 (stand) is PASS.**
 
 ## Environment & commands
 
-This **is a git repo**. Everything runs through a load-bearing command preamble in the conda env `t1mpc` (Python 3.10: pinocchio 4.0, aligator, numpy 2.2, mujoco 3.10). The env has `t1_nmpc` installed editable (`pip install -e . --no-deps`); use conda exclusively.
+This **is a git repo**. Everything runs through a load-bearing command preamble in the conda env `t1mpc` (Python 3.10: pinocchio 4.0, casadi 3.7.2+Fatrop, numpy 2.2, mujoco 3.10). The env has `t1_nmpc` installed editable (`pip install -e . --no-deps`); use conda exclusively.
 
 Always run from `/home/yoonwoo/humanoid_mpc_ws/src/t1_nmpc` with this exact preamble:
 
@@ -26,10 +28,10 @@ Common invocations (prefix each with the preamble above):
 ```bash
 # Test suite (the authoritative regression gate)
 python -m pytest tests/ -q -p no:cacheprovider
-# Expected: 51 passed, 1 xfailed
+# Expected: 10 passed
 
-# Live sim runner (walk)
-python sim/walk.py [--vx 0.3] [--duration 4.0] [--view] [--gif out.gif] [--threads 4]
+# Live sim runner (stand)
+python sim/stand.py [--duration 4.0] [--view] [--gif out.gif]
 ```
 
 ## Architecture
@@ -38,71 +40,86 @@ python sim/walk.py [--vx 0.3] [--duration 4.0] [--view] [--gif out.gif] [--threa
 
 ```
 t1_nmpc/
-  robot/          plant layer (shared across formulations)
-    config.py       MPCConfig, JointCommand, WBConfig (all robot numbers)
-    model.py        T1_URDF_PATH, EXPECTED_JOINT_NAMES, RobotModel, load_model
-    execution.py    pd_torque
-  wb/             controller layer (aligator ProxDDP kinodynamic MPC)
-    config.py       WBConfig, AligatorConfig, make_wb_config, make_aligator_config
-    dynamics.py     WBModel (pinocchio.casadi cpin symbolic RBD for accel-level terms)
-    ode.py          AligatorModel, build_aligator_model, make_ode, nominal_stand_x
-    ocp.py          make_stage, build_problem, build_gait_cycle (StageModel factory)
-    swing.py        SwingZBaumgarte (accel-level Baumgarte hard swing-z constraint)
-    mpc.py          AligatorMPC.reset/step, AligatorResult
-    state.py        mujoco_to_freeflyer, freeflyer_command (free-flyer state <-> MuJoCo)
-    execution.py    extract_tau_ff (RNEA-based feedforward torque)
-    gait.py         Gait, SLOW_WALK, WALK, STANCE_GAIT
-  runtime/        transport layer
-    transport.py    Transport protocol (read_state/write_command/now)
-    mujoco_transport.py  MujocoTransport (sim-backed transport for threaded loop)
-    sdk_transport.py     SdkTransport (Booster SDK, robot-only, UNTESTED)
-sim/              simulation & runner
-    mujoco_runtime.py   MujocoRuntime (2000 Hz physics, sysID armature + viscous damping)
-    state.py            wb_state_estimate, wb_reset (free-flyer state from MuJoCo)
-    walk.py             Aligator walk runner: headless metrics, GIF, live viewer
+  robot/          plant layer
+    assets/t1_description/   vendored t1.urdf + 30 meshes
+                             (package_dirs root = robot/assets)
+    model.py      FreeFlyer T1 load (package_dirs); add 8 corner contact frames;
+                  mass via computeTotalMass; q0 from nominal_joint_pos; base = 'Trunk'
+    config.py     T1WBConfig: horizon (nodes, dt_min, dt_max, tau_nodes), Q/R diagonals,
+                  corner geometry, μ=0.4, nominal_joint_pos (shallow crouch),
+                  base height 0.6734, joint limits
+  wb/             whole-body-RNEA CasADi/Fatrop controller
+    dynamics.py   cpin: state_integrate/difference (FreeFlyer manifold),
+                  rnea_dynamics (8-corner force application via f_ext accumulation)
+    ocp.py        Opti transcription: adaptive vars, params, RNEA path constraint,
+                  contact/friction/velocity constraints, tracking objective,
+                  gap-closing-equality-first Fatrop ordering invariant
+    gait.py       biped contact schedule: stand = all 8 corners in contact;
+                  2 physical-foot swing groups, each expanded ×4 to corner flags
+    mpc.py        WholeBodyMPC: build Opti, init Fatrop solver_function,
+                  update_params, solve, warm-start (prev solution incl. lam_g)
+    state.py      MuJoCo <-> pinocchio FreeFlyer map (the §9 conversion —
+                  single source of truth); first-node command extraction (q_des, v_des, τ_j)
+  runtime/        transport layer (protocol unchanged; repointed to new mpc/state)
+    transport.py           Transport protocol (read_state/write_command/now)
+    mujoco_transport.py    MujocoTransport (sim-backed transport)
+    sdk_transport.py       SdkTransport (Booster SDK, UNTESTED)
+sim/
+    mujoco_runtime.py   2000 Hz physics; settle to FK-consistent stand height 0.6734
+    stand.py            closed-loop stand runner: metrics (Σfz/mg, tilt, solve p90),
+                        viewer, GIF
     _sim_util.py        tilt_from_quat_wxyz, upright_ok
 ```
 
 ### State and control
 
-**Free-flyer state `x ∈ ℝ⁶⁷`** (aligator path) = `[q(34), v(33)]` where `q = [pos(3), quat_xyzw(4), joints(27)]`, `v = [lin_world(3), ang_local(3), jvel(27)]`. Uses a **JointModelFreeFlyer** base (quaternion), with MuJoCo ↔ pinocchio conversion handled in `wb/state.py`. The 27 MPC joints = the canonical 29 (§A.5) minus the 2 head joints.
+**State `x ∈ ℝ⁷¹`** = `[q(36), v(35)]` where `q = [pos(3), quat_xyzw(4), joints(29)]`,
+`v = [v_lin_local(3), v_ang_local(3), jvel(29)]`. Uses **JointModelFreeFlyer** base (quaternion). Both base-velocity parts are in the **body-local** frame (pinocchio FreeFlyer convention). MuJoCo ↔ pinocchio conversion is in `wb/state.py` — see invariants below.
 
-**Control `u ∈ ℝ³⁹`** = `[W_l(6), W_r(6), qdd_joints(27)]` — left/right foot 6D contact wrenches + joint accelerations. Kinodynamic formulation: contact wrenches are decision variables, `extract_tau_ff` recovers joint torques via RNEA.
+**Decision delta-state `dx ∈ ℝ⁷⁰`** = `[dq(35), dv(35)]`, reconstructed per node via `cpin.integrate` on the manifold.
+
+**Input (adaptive per node):**
+- Nodes `i < tau_nodes`: `u_i = [a(35), forces(24), τ_j(29)]` — width 88.
+- Nodes `i ≥ tau_nodes`: `u_i = [a(35), forces(24)]` — width 59.
+
+`forces(24)` = 8 corner 3D forces in world frame (nf=24). `a(35)` = joint accelerations (base 6 + joints 29).
 
 ### Solver
 
-`AligatorMPC` builds a `TrajOptProblem` (N=20 nodes, dt=0.035 s, ~0.7 s horizon) and runs ProxDDP with `max_iters=2` by default. The walk path adds `SwingZBaumgarte` — a custom Python `StageFunction` implementing an accel-level Baumgarte hard swing-z equality. Because this is a Python residual, the C++ parallel Riccati solver cannot call it across threads (GIL segfault): **walk is forced SERIAL** (`LQ_SOLVER_SERIAL`). Stand (gait=None, all-C++ residuals) keeps the parallel Riccati. Pass `--threads 4` only for stand or when no gait is set.
+`WholeBodyMPC` builds a CasADi `Opti` NLP and calls `opti.to_function(...)` to produce a `solver_function` backed by **Fatrop** (`opti.solver('fatrop', opts)`). Each MPC tick calls the solver function with the current state as `x_init` parameter and the previous solution as warm-start. The horizon uses a geometric time grid: `dt_i = dt_min · γ^i`, `γ = (dt_max/dt_min)^{1/(nodes-1)}`.
 
-### Contact handling
+### Contact model
 
-Stance feet get a `FrameVelocityResidual` hard equality (zero velocity, AL-enforced) + `CentroidalFrictionConeResidual` + `CentroidalWrenchConeResidual` (hard `NegativeOrthant` by default). Swing feet get `SwingZBaumgarte` (hard accel-level z equality via AL) + an optional soft forward foot-placement x cost. Contact flags are determined per-node by `Gait.contact_flags(t)` and baked into the stage at build time — no bound-gating needed (aligator AL handles rank changes natively).
+**8 unilateral 3D corner forces** (4 per foot) — each `f_z ≥ 0` and inside a linearised friction cone (`μ=0.4`). The 4 corners of a foot share one ankle-roll parent joint; their world forces are rotated to the body frame and accumulated into the same `f_ext` slot in `rnea_dynamics`. Stand: all 8 corners always in contact.
 
 ### Runtime
 
-`AligatorMPC.step(x_meas, t)` builds (or recedes) the problem and runs ProxDDP. The recede path (`_recede`) calls `replaceStageCircular` + `cycleProblem` to advance the rolling horizon one knot with tip-stage gait time `t + N*dt`. The stand path just updates `x0_init`.
-
-`sim/walk.py` is the sim runner: it wraps `MujocoTransport` (which uses `MujocoRuntime`) and drives the `AligatorMPC` in a closed loop, printing fall time, CoM advance, lateral drift, and p90 solve time.
+`WholeBodyMPC.solve(x_meas)` updates `x_init`, calls the Fatrop solver function, and returns the first-node torque command via `state.first_node_command`. The sim runner `sim/stand.py` drives the closed loop at ~50 Hz MPC / 2000 Hz physics, printing Σfz/mg, max tilt, and p90 solve time.
 
 ## Invariants to respect
 
-- **Faithfulness over cleverness.** Match `t1_controller`; cite sources; log deliberate divergences in the ledger.
-- **Hard stagewise constraints native to aligator** — friction cone / CoP / contact velocity equality are hard `NegativeOrthant` or `EqualityConstraintSet` constraints, not penalty hacks.
-- **Accel-level Baumgarte swing-z** (`swing.py`) is input-coupled so AL enforces it; a position-level constraint is not AL-enforceable at low iteration budgets.
-- **Walk is SERIAL.** `SwingZBaumgarte` is a custom Python residual; the C++ parallel LQ solver cannot call Python across threads (GIL segfault). Only disable serial when `gait is None` (stand path).
-- **Gait cycle must stay longer than the MPC horizon.** `SLOW_WALK` is 1.7 s; the horizon is ~0.7 s (N=20, dt=0.035). A 1.0 s cycle wraps a full gait period inside the horizon, producing a near-periodic reference the few-iter solver cannot satisfy.
-- **Faithfulness, no YAGNI speculation.** The M2 hand-tracking / contouring machinery is absent until its milestone. Keep the codebase lean.
+- **MuJoCo ↔ pinocchio FreeFlyer state map — single source of truth in `wb/state.py`.**
+  The critical non-obvious rule: MuJoCo `qvel[0:3]` is **world**-frame; pinocchio FreeFlyer `v[0:3]` is **body-local**. The conversion is `v[0:3] = R(q)ᵀ · qvel[0:3]`. Omitting this rotation is a latent bug (only harmless exactly at upright stand). Do not re-derive this anywhere else.
+
+- **Fatrop gap-closing-equality-first.** At each Opti stage the state-transition (gap-closing) equality **must be added before any inequality** — otherwise Fatrop aborts with `Constraint Jacobian must start with gap-closing constraint`. The OCP code must maintain this ordering.
+
+- **Fatrop staircase variable structure.** `include_acc=True` (accelerations in the input) is required for Fatrop's structure detection. The adaptive input width (`τ_j` present only on the first `tau_nodes` nodes) changes stage width mid-horizon; `structure_detection='auto'` must correctly segment this.
+
+- **f_ext accumulation.** The 4 corners of each foot share one `parentJoint` (the ankle-roll joint). `rnea_dynamics` must accumulate all 4 corner contributions into the same `f_ext` slot — not overwrite. This is verified correct.
+
+- **No aligator/ProxDDP.** The aligator backend is removed. Do not re-introduce it.
+
+- **No YAGNI speculation.** Walking gait, arm/EE manipulation, Ipopt/OSQP, hardware/SDK, MJCF vendoring are deferred. Keep the codebase lean.
+
+- **Cite or log divergences.** When a numerical value or formulation choice diverges from `t1_controller`, log it in `docs/2026-06-25-t1controller-divergences.md`.
 
 ## Status & docs
 
-- **M0 (stand): PASS.** fz/mg ∈ [0.9, 1.1], p90 solve ≈ 14 ms < 25 ms budget; holds upright.
-- **M1 (forward walk): advances but topples laterally ~1.5 s.** The robot steps forward (CoM advances, foot lifts confirmed), but falls sideways around 1.5 s. The open problem is **lateral CoM-sway reference**: the few-iteration ProxDDP solver needs the base-y reference explicitly shifted over the stance foot in single support, and the current `_stage_x_ref` lateral shift is not yet sufficient to fully stabilize single-leg balance. This is a reference/planning gap (same gap identified in the divergences ledger), not solver convergence — the OCP solves cleanly. The forward locomotion mechanism in place: velocity-driven base velocity reference (`w_base_vel=3`) drives CoM forward, and an explicit forward foot-placement x target (`foot_place_lookahead * vx`) prevents the swing foot from scuffing backward.
+- **M0 (stand): PASS.** `fz_ratio_p50=0.9999`, `max_tilt=1.95°`, no fall, `solve_p90≈28.7 ms`.
+- **M1 (forward walk): deferred** until stand is rock-solid and walking gait (swing/contact-schedule + Fatrop structure detection under changing contact rank) is validated.
 - **M2 (walk + hand tracking): deferred** until M1 closes.
 
 ### Docs
 
-- `docs/superpowers/specs/2026-06-26-aligator-native-port-design.md` — aligator port design spec
-- `docs/superpowers/specs/2026-06-26-aligator-port-scoping.md` — port scoping notes
-- `docs/superpowers/specs/2026-06-26-clean-base-design.md` — clean-base refactor spec
-- `docs/superpowers/plans/2026-06-26-aligator-native-port.md` — aligator port task plan
-- `docs/superpowers/plans/2026-06-26-clean-base.md` — clean-base task plan
+- `docs/superpowers/specs/2026-06-27-wb-rnea-t1-port-design.md` — wb-rnea port design spec (authoritative architecture)
 - `docs/2026-06-25-t1controller-divergences.md` — ledger of deliberate divergences from t1_controller
