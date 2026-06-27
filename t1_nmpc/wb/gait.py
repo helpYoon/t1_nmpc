@@ -7,17 +7,15 @@ FootMode = tuple  # (lf_contact: bool, rf_contact: bool)
 
 
 def v_z_ref(phase: float, cfg: MPCConfig) -> float:
-    """Time-derivative of a cubic swing-height spline: +liftoff -> 0 at apex -> -touchdown.
-    Implemented as a symmetric cubic in [0,1] whose derivative is zero at phase=0.5."""
+    """Piecewise-linear z-velocity reference for a swing foot.
+    Rises from +v_liftoff at liftoff (phase=0) to 0 at apex (phase=0.5),
+    then descends to v_touchdown at touchdown (phase=1)."""
     p = min(max(phase, 0.0), 1.0)
-    # height h(p) = swing_height * (3p^2 - 2p^3) blended for up/down would not return to 0;
-    # use a velocity profile directly: v(p) = A * (1 - 2p) * 6 ... choose simple shape:
-    # v(0)=+v_liftoff, v(0.5)=0, v(1)=-v_touchdown (touchdown stored negative).
     if p <= 0.5:
         s = p / 0.5
-        return cfg.v_liftoff * (1.0 - s)            # linear rise->0; (cubic optional refinement)
+        return cfg.v_liftoff * (1.0 - s)            # piecewise linear
     s = (p - 0.5) / 0.5
-    return cfg.v_touchdown * s                       # 0 -> v_touchdown (negative)
+    return cfg.v_touchdown * s                       # piecewise linear
 
 
 class StandGait:

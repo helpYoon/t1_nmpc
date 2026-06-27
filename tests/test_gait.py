@@ -18,6 +18,9 @@ def test_walk_mode_sequence():
     assert g.mode_at(1.0) == (True, False)     # RF swing
     assert g.mode_at(1.35) == (True, True)     # double
     assert g.mode_at(1.4) == g.mode_at(0.0)    # periodic
+    assert g.mode_at(0.6) == (True, True)    # LF-swing ends, double begins
+    assert g.mode_at(0.7) == (True, False)   # double ends, RF-swing begins
+    assert g.mode_at(1.3) == (True, True)    # RF-swing ends, double begins
 
 
 def test_walk_swing_phase_progresses():
