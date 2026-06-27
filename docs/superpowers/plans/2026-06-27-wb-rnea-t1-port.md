@@ -1063,10 +1063,20 @@ if __name__ == "__main__":
 
 ---
 
-### Task 9: Docs — CLAUDE.md rewrite, divergence ledger, pyproject
+### Task 9: Docs + Fatrop-debug hygiene — CLAUDE.md rewrite, divergence ledger, pyproject, `.mtx` cleanup
 
 **Files:**
-- Modify: `CLAUDE.md`, `pyproject.toml`, `docs/2026-06-25-t1controller-divergences.md`
+- Modify: `CLAUDE.md`, `pyproject.toml`, `docs/2026-06-25-t1controller-divergences.md`, `t1_nmpc/wb/ocp.py`
+- Create/modify: `.gitignore`
+
+- [ ] **Step 0: Fix the Fatrop debug-dump hygiene.** Fatrop's `debug: True` (in `StandOCP._fatrop_opts`, `t1_nmpc/wb/ocp.py`) writes `debug_fatrop_*.mtx` files into the repo root on every solve. Set **`debug: False`** in `_fatrop_opts`, then verify the stand gate still passes and no `.mtx` files are produced:
+```bash
+cd /home/yoonwoo/humanoid_mpc_ws/src/t1_nmpc
+rm -f debug_fatrop_*.mtx
+PYTHONPATH= OMP_NUM_THREADS=1 conda run -n t1mpc python -m pytest tests/test_ocp.py tests/test_stand_closed_loop.py -q
+ls debug_fatrop_*.mtx 2>/dev/null && echo "STILL DUMPING" || echo "clean — no .mtx"
+```
+If `debug: False` breaks Fatrop convergence (CV high / structure-detection error — unexpected, `debug` only controls the dumps), revert to `debug: True` and instead add `debug_fatrop_*.mtx` to `.gitignore` and report the divergence. Either way, add `debug_fatrop_*.mtx` to `.gitignore` as belt-and-suspenders. Remove any stray `.mtx` from the working tree.
 
 - [ ] **Step 1: Rewrite `CLAUDE.md`** to describe the new controller: CasADi `Opti` + Fatrop `whole_body_rnea` on T1; `x=[q(36),v(35)]`, adaptive input `[a, forces(24), τ_j(29 first-nodes)]`; FreeFlyer base; 8-corner flat-foot contacts; the §9 MuJoCo↔pinocchio conversion (with the `R(q)ᵀ` base-linear rotation as an invariant); Fatrop gap-closing-first + staircase + f_ext-accumulation invariants; reuse-t1mpc-env (no new deps); status M0-stand. Drop all aligator/ProxDDP/serial-walk text.
 
