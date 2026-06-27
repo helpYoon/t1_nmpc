@@ -78,3 +78,24 @@ def build_problem(am, wb_cfg, al_cfg, x0, x_ref, schedule, swing_schedule, FS=6)
     term = aligator.CostStack(am.space, stages[0].nu)
     term.addCost("xt", aligator.QuadraticStateCost(am.space, stages[0].nu, x_ref, np.diag(wx * al_cfg.w_term_scale)))
     return aligator.TrajOptProblem(x0, stages, term)
+
+
+def build_gait_cycle(am, wb_cfg, al_cfg, gait, x_ref, node_times, FS=6):
+    odes = {}
+    def ode_for(flags):
+        k = tuple(flags)
+        if k not in odes: odes[k] = make_ode(am, flags, FS)
+        return odes[k]
+    models, schedule = [], []
+    for t in np.asarray(node_times, float):
+        flags = [bool(b) for b in gait.contact_flags(float(t))]
+        swing_refs = []
+        for i, on in enumerate(flags):
+            if not on:
+                z, _, _ = gait.swing_z(float(t), i)        # gait swing-z height (xy target = current foot xy)
+                rdata = am.model.createData(); pin.framesForwardKinematics(am.model, rdata, x_ref[:am.nq])
+                p = rdata.oMf[int(am.foot_ids[i])].translation.copy(); p[2] = z
+                swing_refs.append((i, p))
+        models.append(make_stage(am, wb_cfg, al_cfg, flags, x_ref, swing_refs, ode_for(flags), FS))
+        schedule.append(flags)
+    return models, schedule
