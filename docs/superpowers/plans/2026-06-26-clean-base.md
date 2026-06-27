@@ -342,8 +342,8 @@ git rm docs/acados_exact_elimination_pipeline.md \
        docs/superpowers/specs/2026-06-25-crocoddyl-walk-m1-design.md \
        docs/superpowers/specs/2026-06-25-d4-event-aligned-grid-design.md \
        docs/superpowers/specs/2026-06-25-reduced-basis-projection-design.md
-git rm -r .superpowers/sdd
 ```
+`.superpowers/sdd/` is **gitignored local scratch** (briefs/reports/review diffs) — `git ls-files` shows zero tracked files there, so it is part of no commit. Do **not** `git rm` it (that errors on untracked paths). It is removed with a plain `rm -rf .superpowers/sdd` as a final local-cleanup step *after* this task's report is written and the branch review is done — not committed.
 
 - [ ] **Step 5: Fix the stale pyproject description**
 
