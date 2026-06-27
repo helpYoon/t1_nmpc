@@ -239,6 +239,11 @@ class MujocoRuntime:
                                 _euler_zyx_rates_from_local_angvel(euler, d.qvel[3:6]), qd_j])
         return q_pin, v_pin
 
+    def freeflyer_state(self, pin_model):
+        """Measured FreeFlyer x[71] for the whole_body_rnea MPC (NOT the euler _pin_q_v)."""
+        from t1_nmpc.wb.state import mujoco_to_freeflyer
+        return mujoco_to_freeflyer(self.mj_data.qpos, self.mj_data.qvel, pin_model)
+
     # ---- control ----
     def _apply_torque(self, tau29: np.ndarray):
         for a, j in enumerate(self.act_to_state_idx):
