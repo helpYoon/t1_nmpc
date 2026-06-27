@@ -1,6 +1,6 @@
 # tests/test_wb_swing.py
 import numpy as np
-from t1_nmpc.wb.gait_wb import SLOW_WALK, SWING_HEIGHT
+from t1_nmpc.wb.gait import SLOW_WALK, SWING_HEIGHT
 
 # slow_walk: right foot (side=1) swings during LF=[0.0, 0.65]; left foot (side=0) during RF=[0.85, 1.5].
 G = SLOW_WALK

@@ -1,6 +1,6 @@
 import numpy as np
 
-from t1_nmpc.wb.config_wb import make_wb_config
+from t1_nmpc.wb.config import make_wb_config
 
 
 def test_wb_config_dims_and_weights():

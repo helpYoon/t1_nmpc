@@ -4,7 +4,7 @@ solution. Kinodynamics returns NO torque -> recover via RNEA(q,v,a) - sum J_LWA^
 from __future__ import annotations
 import numpy as np
 import pinocchio as pin
-from .aligator_model import make_ode
+from .ode import make_ode
 
 def extract_tau_ff(am, x_meas, u0, FS: int = 6):
     q = np.asarray(x_meas[:am.nq]); v = np.asarray(x_meas[am.nq:])

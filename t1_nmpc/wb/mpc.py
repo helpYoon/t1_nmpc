@@ -26,8 +26,8 @@ import pinocchio as pin
 import aligator
 
 _libc = ctypes.CDLL(None)
-from .aligator_model import make_ode, nominal_stand_x
-from .aligator_walk import build_problem, build_gait_cycle, build_problem_from_stages, make_stage
+from .ode import make_ode, nominal_stand_x
+from .ocp import build_problem, build_gait_cycle, build_problem_from_stages, make_stage
 
 @contextlib.contextmanager
 def _suppress_cxx_stderr():
@@ -123,7 +123,7 @@ class AligatorMPC:
             # Build the initial N stages with lateral-shifted x_refs appropriate for each
             # stage's contact mode. Subsequent stages are built dynamically in _recede.
             node_times = np.arange(N) * self.cfg.dt
-            from .aligator_walk import make_stage as _ms
+            from .ocp import make_stage as _ms
             import pinocchio as _pin
             _rdata = self._x_ref_rdata
             _ode_cache: dict = {}

@@ -8,12 +8,12 @@ from __future__ import annotations
 import argparse, dataclasses, time
 import numpy as np
 
-from t1_nmpc.wb.config_wb import make_wb_config
-from t1_nmpc.wb.config_aligator import make_aligator_config
-from t1_nmpc.wb.aligator_model import build_aligator_model
-from t1_nmpc.wb.aligator_mpc import AligatorMPC
-from t1_nmpc.wb.aligator_state import mujoco_to_freeflyer, freeflyer_command
-from t1_nmpc.wb.gait_wb import SLOW_WALK
+from t1_nmpc.wb.config import make_wb_config
+from t1_nmpc.wb.config import make_aligator_config
+from t1_nmpc.wb.ode import build_aligator_model
+from t1_nmpc.wb.mpc import AligatorMPC
+from t1_nmpc.wb.state import mujoco_to_freeflyer, freeflyer_command
+from t1_nmpc.wb.gait import SLOW_WALK
 from t1_nmpc.runtime.mujoco_transport import MujocoTransport
 from sim._sim_util import tilt_from_quat_wxyz
 

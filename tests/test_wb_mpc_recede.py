@@ -1,9 +1,9 @@
 import numpy as np
-from t1_nmpc.wb.config_wb import make_wb_config
-from t1_nmpc.wb.config_aligator import make_aligator_config
-from t1_nmpc.wb.aligator_model import build_aligator_model, nominal_stand_x
-from t1_nmpc.wb.gait_wb import SLOW_WALK
-from t1_nmpc.wb.aligator_mpc import AligatorMPC
+from t1_nmpc.wb.config import make_wb_config
+from t1_nmpc.wb.config import make_aligator_config
+from t1_nmpc.wb.ode import build_aligator_model, nominal_stand_x
+from t1_nmpc.wb.gait import SLOW_WALK
+from t1_nmpc.wb.mpc import AligatorMPC
 
 def test_full_contact_cycle_solves_finite(capfd):
     cfg = make_wb_config(); al = make_aligator_config(); am = build_aligator_model(cfg)
@@ -19,5 +19,5 @@ def test_full_contact_cycle_solves_finite(capfd):
     # Pristine-output guard: the benign aligator 'Resize happened' log must be suppressed
     out, err = capfd.readouterr()
     assert "Resize happened" not in err and "Resize happened" not in out, (
-        "aligator resize log leaked to output — check _suppress_cxx_stderr in aligator_mpc.py"
+        "aligator resize log leaked to output — check _suppress_cxx_stderr in mpc.py"
     )

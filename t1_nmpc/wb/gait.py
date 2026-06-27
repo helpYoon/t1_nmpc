@@ -1,4 +1,4 @@
-# t1_nmpc/wb/gait_wb.py
+# t1_nmpc/wb/gait.py
 """Walking gait schedule for the WB MPC — faithful port of t1_controller's
 humanoid_common_mpc Gait/GaitSchedule + MotionPhaseDefinition (slow_walk).
 

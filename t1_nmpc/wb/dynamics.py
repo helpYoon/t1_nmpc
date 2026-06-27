@@ -22,7 +22,7 @@ import pinocchio as pin
 import pinocchio.casadi as cpin
 
 from t1_nmpc.robot.model import CONTACT_FRAME_NAMES, CONTACT_PARENT_JOINTS
-from .config_wb import WBConfig, MPC_JOINT_NAMES
+from .config import WBConfig, MPC_JOINT_NAMES
 
 _HEAD_JOINTS = ("AAHead_yaw", "Head_pitch")
 

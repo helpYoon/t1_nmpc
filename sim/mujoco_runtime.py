@@ -27,7 +27,7 @@ MJ_JOINT_QVEL0 = 6   # joint velocities start here in data.qvel
 
 # Real-robot system identification: per-joint (armature [kg m^2], viscous damping [N m s/rad]).
 # t1.xml ships these ALL ZERO, but the MPC tau_ff already folds in the same armature + viscous_damping
-# (config_wb._build_armature/_build_viscous_damping) -> tau_ff over-commanded the sim -> wrong GRF.
+# (config._build_armature/_build_viscous_damping) -> tau_ff over-commanded the sim -> wrong GRF.
 # Setting them on the sim closes both the sim-to-real gap AND the tau_ff/sim mismatch. Wrists reuse the
 # arm value, per the T1 sysID. (Dry friction/frictionloss is intentionally NOT set: the MPC does not
 # model it and it can cause sticking -- a separate sim-to-real step.)

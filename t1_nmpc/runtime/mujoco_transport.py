@@ -6,9 +6,9 @@ import numpy as np
 
 from ..robot.config import JointCommand, make_config
 from ..robot.model import load_model, T1_URDF_PATH
-from ..wb.config_wb import WBConfig
+from ..wb.config import WBConfig
 from sim.mujoco_runtime import MujocoRuntime
-from sim.wb_state import wb_state_estimate, wb_reset as _wb_reset
+from sim.state import wb_state_estimate, wb_reset as _wb_reset
 
 _HEAD_KP, _HEAD_KD = 20.0, 0.5
 

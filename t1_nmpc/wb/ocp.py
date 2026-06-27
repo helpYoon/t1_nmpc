@@ -6,8 +6,8 @@ import numpy as np
 import pinocchio as pin
 import aligator
 from aligator import dynamics, constraints
-from .aligator_model import make_ode
-from .aligator_swingz import SwingZBaumgarte
+from .ode import make_ode
+from .swing import SwingZBaumgarte
 
 
 def _foot_half_extents(wb_cfg):

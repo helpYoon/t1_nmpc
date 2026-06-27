@@ -1,7 +1,7 @@
 import numpy as np
-from t1_nmpc.wb.config_wb import make_wb_config
-from t1_nmpc.wb.aligator_model import build_aligator_model, make_ode, nominal_stand_x
-from t1_nmpc.wb.aligator_exec import extract_tau_ff
+from t1_nmpc.wb.config import make_wb_config
+from t1_nmpc.wb.ode import build_aligator_model, make_ode, nominal_stand_x
+from t1_nmpc.wb.execution import extract_tau_ff
 
 def test_tau_ff_base_rows_vanish():
     cfg = make_wb_config(); am = build_aligator_model(cfg)

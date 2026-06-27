@@ -1,4 +1,4 @@
-# sim/wb_state.py
+# sim/state.py
 """Whole-body MuJoCo state estimate + reset (extracted from the deleted acados stand gate;
 reused by mujoco_transport and the crocoddyl stand gate)."""
 from __future__ import annotations

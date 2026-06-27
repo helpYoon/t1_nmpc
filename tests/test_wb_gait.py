@@ -1,6 +1,6 @@
 # tests/test_wb_gait.py
 import numpy as np
-from t1_nmpc.wb.gait_wb import FLY, RF, LF, STANCE, mode_to_stance, SLOW_WALK
+from t1_nmpc.wb.gait import FLY, RF, LF, STANCE, mode_to_stance, SLOW_WALK
 
 
 def test_mode_enum_values():

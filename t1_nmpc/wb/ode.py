@@ -6,7 +6,7 @@ import numpy as np
 import pinocchio as pin
 import aligator
 from aligator import manifolds, dynamics
-from .model_wb import _HEAD_JOINTS, MPC_JOINT_NAMES, CONTACT_FRAME_NAMES, CONTACT_PARENT_JOINTS
+from .dynamics import _HEAD_JOINTS, MPC_JOINT_NAMES, CONTACT_FRAME_NAMES, CONTACT_PARENT_JOINTS
 
 @dataclass
 class AligatorModel:

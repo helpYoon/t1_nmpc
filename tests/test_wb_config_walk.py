@@ -1,6 +1,6 @@
 # tests/test_wb_config_walk.py
 import numpy as np
-from t1_nmpc.wb.config_wb import make_wb_config
+from t1_nmpc.wb.config import make_wb_config
 
 
 def test_walking_config_fields():
@@ -12,10 +12,10 @@ def test_walking_config_fields():
 
 
 def test_pin_rho_default():
-    from t1_nmpc.wb.config_wb import make_wb_config
+    from t1_nmpc.wb.config import make_wb_config
     assert make_wb_config().pin_rho == 1.0
 
 
 def test_vdot_s_input_weight_regularized():
-    from t1_nmpc.wb.config_wb import make_wb_config
+    from t1_nmpc.wb.config import make_wb_config
     assert make_wb_config().R[39] > 0.0      # was 0 -> singular GN Hessian on range(P) under lm=0

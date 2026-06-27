@@ -1,9 +1,9 @@
 import numpy as np
 import aligator
-from t1_nmpc.wb.config_wb import make_wb_config
-from t1_nmpc.wb.config_aligator import make_aligator_config
-from t1_nmpc.wb.aligator_model import build_aligator_model, make_ode, nominal_stand_x
-from t1_nmpc.wb.aligator_walk import make_stage, build_problem
+from t1_nmpc.wb.config import make_wb_config
+from t1_nmpc.wb.config import make_aligator_config
+from t1_nmpc.wb.ode import build_aligator_model, make_ode, nominal_stand_x
+from t1_nmpc.wb.ocp import make_stage, build_problem
 
 
 def test_hard_cone_stand_holds_fz_equals_mg():

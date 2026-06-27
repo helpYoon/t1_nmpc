@@ -1,5 +1,5 @@
 import numpy as np
-from t1_nmpc.wb.config_wb import make_wb_config
+from t1_nmpc.wb.config import make_wb_config
 from t1_nmpc.runtime.mujoco_transport import MujocoTransport
 
 def test_read_state_shape_and_settle():

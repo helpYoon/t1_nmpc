@@ -7,11 +7,11 @@ Pass criteria:
 """
 import numpy as np
 import pytest
-from t1_nmpc.wb.config_wb import make_wb_config
-from t1_nmpc.wb.config_aligator import make_aligator_config
-from t1_nmpc.wb.aligator_model import build_aligator_model
-from t1_nmpc.wb.aligator_mpc import AligatorMPC
-from t1_nmpc.wb.aligator_state import mujoco_to_freeflyer, freeflyer_command
+from t1_nmpc.wb.config import make_wb_config
+from t1_nmpc.wb.config import make_aligator_config
+from t1_nmpc.wb.ode import build_aligator_model
+from t1_nmpc.wb.mpc import AligatorMPC
+from t1_nmpc.wb.state import mujoco_to_freeflyer, freeflyer_command
 from t1_nmpc.runtime.mujoco_transport import MujocoTransport
 
 

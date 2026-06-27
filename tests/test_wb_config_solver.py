@@ -1,4 +1,4 @@
-from t1_nmpc.wb.config_aligator import AligatorConfig, make_aligator_config
+from t1_nmpc.wb.config import AligatorConfig, make_aligator_config
 
 def test_defaults_match_validated_operating_point():
     c = make_aligator_config()

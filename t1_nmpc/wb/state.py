@@ -19,9 +19,9 @@ Free-flyer state x (67,) = [q(34), v(33)]
 Angular velocity: MuJoCo qvel[3:6] is angular velocity in the LOCAL body frame,
 which is exactly what pinocchio's FreeFlyer tangent v[3:6] expects — no conversion.
 
-Cross-checked against sim/wb_state.py::wb_state_estimate and
+Cross-checked against sim/state.py::wb_state_estimate and
 sim/mujoco_runtime.py::_pin_q_v, which derive the joint slices for the euler-ZYX
-(WBModel) path using qpos[9:36] / qvel[8:35] for the 27 MPC joints (wb_state.py:18
+(WBModel) path using qpos[9:36] / qvel[8:35] for the 27 MPC joints (state.py:18
 uses q_pin[8:35] which originates from q_j = qpos[7:36] shifted by the two head
 joints at local indices 0,1 → same qpos[9:36]).
 """
@@ -29,11 +29,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from .aligator_exec import extract_tau_ff
+from .execution import extract_tau_ff
 from ..robot.config import JointCommand
 
 # ---------------------------------------------------------------------------
-# Fixed index slices (§A.5 order, verified against wb_state.py:18 / _pin_q_v)
+# Fixed index slices (§A.5 order, verified against state.py:18 / _pin_q_v)
 # ---------------------------------------------------------------------------
 # MuJoCo layout: qpos[7:36] = 29 body joints in §A.5 order; head at 7:9
 _MJ_Q_JOINTS = slice(9, 36)   # 27 MPC joint positions  (skip head at 7:9)

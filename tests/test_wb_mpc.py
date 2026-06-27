@@ -1,8 +1,8 @@
 import numpy as np
-from t1_nmpc.wb.config_wb import make_wb_config
-from t1_nmpc.wb.config_aligator import make_aligator_config
-from t1_nmpc.wb.aligator_model import build_aligator_model, nominal_stand_x
-from t1_nmpc.wb.aligator_mpc import AligatorMPC
+from t1_nmpc.wb.config import make_wb_config
+from t1_nmpc.wb.config import make_aligator_config
+from t1_nmpc.wb.ode import build_aligator_model, nominal_stand_x
+from t1_nmpc.wb.mpc import AligatorMPC
 
 def test_stand_step_warmstarts_and_holds_fz():
     cfg = make_wb_config(); al = make_aligator_config(); am = build_aligator_model(cfg)

@@ -1,7 +1,7 @@
 import numpy as np
 
-from t1_nmpc.wb.config_wb import make_wb_config, MPC_JOINT_NAMES
-from t1_nmpc.wb.model_wb import WBModel
+from t1_nmpc.wb.config import make_wb_config, MPC_JOINT_NAMES
+from t1_nmpc.wb.dynamics import WBModel
 
 
 def test_cpin_mass_matrix_matches_pinocchio_numeric():
