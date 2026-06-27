@@ -17,7 +17,6 @@ def _foot_half_extents(wb_cfg):
 
 def _weights(am, al_cfg, contact_flags, FS=6):
     nv = am.nv
-    ndx = am.ndx
     # State tangent layout = [base pos(x,y,z) | base ori(3) | joint pos(nv-6) | base vel(6) | joint vel(nv-6)].
     # base-x POSITION weight is ~0 (forward motion is velocity-driven; a position pull kills forward
     # progress), base-y POSITION firm (lateral-transfer tracking), height + orientation firm. The base

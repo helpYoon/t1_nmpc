@@ -1,6 +1,6 @@
 # sim/state.py
-"""Whole-body MuJoCo state estimate + reset (extracted from the deleted acados stand gate;
-reused by mujoco_transport and the crocoddyl stand gate)."""
+"""Whole-body MuJoCo state estimate + reset for the aligator controller;
+reused by mujoco_transport and the walk runner."""
 from __future__ import annotations
 
 import numpy as np

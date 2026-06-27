@@ -80,11 +80,9 @@ def mujoco_to_freeflyer(rt, am) -> np.ndarray:
 def freeflyer_command(am, x_meas: np.ndarray, res, wb_cfg) -> JointCommand:
     """Build a JointCommand from the aligator MPC result for the MuJoCo transport.
 
-    Uses measured joint positions / velocities as the PD reference so that
-    kp*(q_des - q_meas) ≈ 0 and the feedforward tau_ff (from RNEA) carries the
-    load.  This mirrors the crocoddyl execution path's use of the planned state at
-    node 0 when the look-ahead is small (execution_wb.py::to_joint_command_wb with
-    sample_ahead_s=0.005 and a 27-joint WBModel).
+    Uses the planned next-node joint state as the PD reference so that
+    kp*(q_des - q_meas) actively assists the planned motion (e.g. the lifting
+    swing leg). The feedforward tau_ff (from RNEA) carries the quasi-static load.
 
     Parameters
     ----------

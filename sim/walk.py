@@ -1,8 +1,8 @@
 """Aligator walk runner: headless metrics, offscreen GIF render, and interactive MuJoCo viewer.
 
-  python -m sim.wb_walk_aligator --gif out.gif --duration 3   # offscreen GIF (headless OK)
-  python -m sim.wb_walk_aligator --view --speed 0.5           # live viewer (needs a display)
-  python -m sim.wb_walk_aligator                              # headless metrics only
+  python -m sim.walk --gif out.gif --duration 3   # offscreen GIF (headless OK)
+  python -m sim.walk --view --speed 0.5           # live viewer (needs a display)
+  python -m sim.walk                              # headless metrics only
 """
 from __future__ import annotations
 import argparse, dataclasses, time

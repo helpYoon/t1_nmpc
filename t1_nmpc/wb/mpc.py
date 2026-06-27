@@ -284,7 +284,7 @@ class AligatorMPC:
             self.problem.x0_init = x_meas; self.xs[0] = x_meas.copy()
         t0 = time.perf_counter()
         with _suppress_cxx_stderr():
-            ok = self.solver.run(self.problem, self.xs, self.us, self.vs, self.lams)
+            self.solver.run(self.problem, self.xs, self.us, self.vs, self.lams)
         self.last_solve_s = time.perf_counter() - t0
         R = self.solver.results
         self.xs = [np.asarray(a).copy() for a in R.xs]; self.us = [np.asarray(a).copy() for a in R.us]
