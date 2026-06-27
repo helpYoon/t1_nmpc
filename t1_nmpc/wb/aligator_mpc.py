@@ -4,11 +4,44 @@ when gait is set (Task 8). Mirrors CrocoMPC's reset/step interface so the runner
 swap in directly."""
 from __future__ import annotations
 from dataclasses import dataclass
+import contextlib
+import ctypes
+import os
 import time
 import numpy as np
 import aligator
+
+_libc = ctypes.CDLL(None)
 from .aligator_model import make_ode, nominal_stand_x
 from .aligator_walk import build_problem, build_gait_cycle, build_problem_from_stages
+
+@contextlib.contextmanager
+def _suppress_cxx_stderr():
+    """Redirect C-level fd 1 and fd 2 to /dev/null for the duration of the block.
+    Python sys.stdout/sys.stderr are unaffected. Both fds are restored in finally
+    even on exception. fflush(NULL) is called while fds point at /dev/null so that
+    any buffered C-library output (aligator uses fmt::vprint via stdout FILE*) is
+    discarded before the fds are restored.
+
+    Suppresses the benign aligator 'Resize happened' log printed during
+    cycleProblem/run when the active constraint dimension changes at a contact-mode
+    transition (DS↔SS: 50↔25 constraints)."""
+    _libc.fflush(None)  # flush any pending C output before we redirect
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    saved1 = os.dup(1)
+    saved2 = os.dup(2)
+    try:
+        os.dup2(devnull_fd, 1)
+        os.dup2(devnull_fd, 2)
+        yield
+    finally:
+        _libc.fflush(None)  # discard buffered C output to /dev/null before restore
+        os.dup2(saved1, 1)
+        os.dup2(saved2, 2)
+        os.close(saved1)
+        os.close(saved2)
+        os.close(devnull_fd)
+
 
 @dataclass
 class AligatorResult:
@@ -79,7 +112,8 @@ class AligatorMPC:
         m = self._cycle_models[ci]
         d = self._cycle_datas[ci]
         self.problem.replaceStageCircular(m)
-        self.solver.cycleProblem(self.problem, d)
+        with _suppress_cxx_stderr():
+            self.solver.cycleProblem(self.problem, d)
         self._ci += 1
         self.problem.x0_init = x_meas
         # Shift primal warm-start: drop first (solved) state/control, extrapolate at horizon end
@@ -97,7 +131,8 @@ class AligatorMPC:
             # Stand path: only update x0; no horizon shift needed
             self.problem.x0_init = x_meas; self.xs[0] = x_meas.copy()
         t0 = time.perf_counter()
-        ok = self.solver.run(self.problem, self.xs, self.us, self.vs, self.lams)
+        with _suppress_cxx_stderr():
+            ok = self.solver.run(self.problem, self.xs, self.us, self.vs, self.lams)
         self.last_solve_s = time.perf_counter() - t0
         R = self.solver.results
         self.xs = [np.asarray(a).copy() for a in R.xs]; self.us = [np.asarray(a).copy() for a in R.us]
