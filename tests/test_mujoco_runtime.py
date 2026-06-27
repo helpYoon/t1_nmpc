@@ -12,7 +12,7 @@ from sim.mujoco_runtime import (
 
 
 def _urdf_path():
-    return ("/home/yoonwoo/humanoid_mpc_ws/src/wb_humanoid_mpc/"
+    return ("/home/yoonwoo/humanoid_mpc_ws/src/t1_controller/"
             "robot_models/booster_t1/t1_description/urdf/t1.urdf")
 
 

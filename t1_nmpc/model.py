@@ -15,7 +15,7 @@ import pinocchio as pin
 from .config import MPCConfig
 
 # Canonical T1 URDF path (single source of truth; imported by Phase-2 tests).
-T1_URDF_PATH = "/home/yoonwoo/humanoid_mpc_ws/src/wb_humanoid_mpc/robot_models/booster_t1/t1_description/urdf/t1.urdf"
+T1_URDF_PATH = "/home/yoonwoo/humanoid_mpc_ws/src/t1_controller/robot_models/booster_t1/t1_description/urdf/t1.urdf"
 
 # §A.5 — the single source of truth for joint order (29 names, Pinocchio DFS).
 EXPECTED_JOINT_NAMES: Tuple[str, ...] = (

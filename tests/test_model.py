@@ -11,7 +11,7 @@ from t1_nmpc.model import (
 )
 
 URDF = (
-    "/home/yoonwoo/humanoid_mpc_ws/src/wb_humanoid_mpc/"
+    "/home/yoonwoo/humanoid_mpc_ws/src/t1_controller/"
     "robot_models/booster_t1/t1_description/urdf/t1.urdf"
 )
 

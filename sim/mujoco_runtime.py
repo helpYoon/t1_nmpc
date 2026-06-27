@@ -18,7 +18,7 @@ import pinocchio as pin
 
 from t1_nmpc.config import MPCConfig
 
-T1_MJCF_PATH = ("/home/yoonwoo/humanoid_mpc_ws/src/wb_humanoid_mpc/"
+T1_MJCF_PATH = ("/home/yoonwoo/humanoid_mpc_ws/src/t1_controller/"
                 "robot_models/booster_t1/t1_description/urdf/t1.xml")
 
 # MuJoCo base/joint layout offsets (free joint = 7 qpos / 6 qvel)
