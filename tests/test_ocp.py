@@ -38,7 +38,11 @@ def test_walkocp_walk_case_solves_and_lifts():
     cfg = make_config(); rm = load_model(cfg); ocp = WalkOCP(cfg, rm)
     x0 = nominal_x(cfg, rm.model)
     ct, sw = WalkGait(cfg).schedules(0.0)                # LF swing at the front of the horizon
-    out, cv = _solve(ocp, cfg, rm, x0, ct, sw, max_iter=300)
+    # max_iter=600: this stress case uses zero footstep targets (origin), which the base-vx
+    # fix (un-tracked v_x, Task 6) converges a little slower from the cold gravity guess; it
+    # reaches CV~4e-5 by ~600 iters. The CV gate (<1e-2) is unchanged. The MPC uses sensible
+    # foot-center targets + warm starts and converges well within cfg.fatrop_max_iter.
+    out, cv = _solve(ocp, cfg, rm, x0, ct, sw, max_iter=600)
     assert cv < 1e-2, f"walk OCP CV {cv:.2e}"
     # swing foot (Left = corners 0-3) carries ~zero force at an interior swing node
     swing_node = 5

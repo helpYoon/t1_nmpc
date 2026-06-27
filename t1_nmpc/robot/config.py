@@ -125,8 +125,10 @@ class MPCConfig:
     kp: np.ndarray = field(default_factory=_kp)
     kd: np.ndarray = field(default_factory=_kd)
 
-    # Fatrop options (single max_iter cap; warm-started ticks converge well under it)
-    fatrop_max_iter: int = 50
+    # Fatrop options (single max_iter cap; warm-started ticks converge well under it).
+    # Sized for the hardest COLD solve: the walk reset (LF swing) needs ~300 iters from
+    # the gravity-comp guess; warm ticks stop early on `fatrop_tol` far below this cap.
+    fatrop_max_iter: int = 300
     fatrop_tol: float = 1e-3
     fatrop_mu_init: float = 1e-4
 

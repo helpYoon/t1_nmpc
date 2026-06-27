@@ -144,7 +144,21 @@ class WalkOCP:
                 opti.subject_to((1 - ic) * (vz - vz_ref) == 0)
 
     def _objective(self):
-        Q, R = ca.diag(self.Q_diag), ca.diag(self.R_diag)
+        # base-vx fix (Task 6): the state-tracking Q drives every velocity -> 0 (its target).
+        # Leaving the base local x-velocity weight on (Q[v_x]=2000) fought the dedicated
+        # base-vx term (was w_bvx=200) below, so the optimum was v_x ~= base_vx/11 (~91%
+        # attenuated -> the robot barely moved forward). Fix: ZERO the base-v_x weight in the
+        # to-zero state tracking so the dedicated w_bvx term ALONE governs forward velocity,
+        # and raise w_bvx to a tracking-grade weight (2000). The base-vx term stays STAGE-only
+        # (nodes 0..N-1): pinning the TERMINAL v_x to base_vx conflicts with the pinned-foot
+        # horizon end and destabilises the walk solve. Lateral (v_y) tracking is untouched
+        # (no v_y command -> still prevents sideways drift). Stand (base_vx=0) keeps v_x -> 0
+        # via the same term, so M0 is preserved. (With v_x un-tracked, the hard cold start
+        # converges a little slower; warm MPC ticks and the closed loop are unaffected.)
+        track_mask = np.ones(self.ndx)
+        track_mask[self.nv + 0] = 0.0                  # dv index 0 = base local v_x
+        Q = ca.diag(self.Q_diag * ca.DM(track_mask))
+        R = ca.diag(self.R_diag)
         obj = 0
         for i in range(self.nodes):
             u = self.U[i]
@@ -154,8 +168,8 @@ class WalkOCP:
             obj += e_dx.T @ Q @ e_dx + (u - self.u_des_full).T @ R @ (u - self.u_des_full)
         e_dx = self.DX[self.nodes] - self.dx_des
         obj = obj + e_dx.T @ Q @ e_dx
-        # base forward-velocity tracking: pin base local x-velocity (v[0]) to base_vx
-        w_bvx = 200.0
+        # base forward-velocity tracking: track base local x-velocity (v[0]) to base_vx
+        w_bvx = 2000.0
         for i in range(self.nodes):
             vx = self._v(i)[0]
             obj = obj + w_bvx * (vx - self.base_vx)**2
