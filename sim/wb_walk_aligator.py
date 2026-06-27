@@ -30,7 +30,7 @@ def _build(vx, max_iter, n_horizon=None, threads=None):
     am = build_aligator_model(cfg)
     tp = MujocoTransport(cfg, mpc_hz=40.0)
     rt = tp.rt
-    mpc = AligatorMPC(cfg, al, am, gait=SLOW_WALK)
+    mpc = AligatorMPC(cfg, al, am, gait=SLOW_WALK, v_cmd=(float(vx), 0.0, 0.0))
     x0 = mujoco_to_freeflyer(rt, am)
     mpc.reset(x0)
     return cfg, al, am, tp, rt, mpc

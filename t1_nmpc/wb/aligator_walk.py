@@ -18,10 +18,13 @@ def _foot_half_extents(wb_cfg):
 def _weights(am, al_cfg, contact_flags, FS=6):
     nv = am.nv
     ndx = am.ndx
-    # base tangent = [lin x,y,z | ang x,y,z]: horizontal (x,y) low so the CoM can sway for emergent
-    # lateral balance; height (z) + orientation firm.
-    wx = np.r_[al_cfg.w_base_xy, al_cfg.w_base_xy, al_cfg.w_base_z, np.full(3, al_cfg.w_base_ori),
-               np.full(nv - 6, al_cfg.w_joint_pos), np.full(nv, al_cfg.w_vel)]
+    # State tangent layout = [base pos(x,y,z) | base ori(3) | joint pos(nv-6) | base vel(6) | joint vel(nv-6)].
+    # base-x POSITION weight is ~0 (forward motion is velocity-driven; a position pull kills forward
+    # progress), base-y POSITION firm (lateral-transfer tracking), height + orientation firm. The base
+    # 6 VELOCITIES track the commanded base velocity (forward drive); joint velocities just damp.
+    wx = np.r_[al_cfg.w_base_x, al_cfg.w_base_y, al_cfg.w_base_z, np.full(3, al_cfg.w_base_ori),
+               np.full(nv - 6, al_cfg.w_joint_pos),
+               np.full(6, al_cfg.w_base_vel), np.full(nv - 6, al_cfg.w_vel)]
     nu = 2 * FS + (nv - 6)
     wu = np.empty(nu)
     wu[:2 * FS] = al_cfg.w_force_reg
@@ -62,6 +65,11 @@ def make_stage(am, wb_cfg, al_cfg, contact_flags, x_ref, swing_refs, ode, FS=6):
             sz = SwingZBaumgarte(am, am.foot_ids[foot_idx], FS)
             sz.z_ref = float(p_ref[2])   # gait swing height; vz_ref=az_ref=0 -> Baumgarte damps toward it
             swing_z_fns.append(sz)
+            # soft FORWARD foot-placement (the "catch"): pull the swing foot toward the forward x target
+            # baked into p_ref[0] by the MPC. x only -- z is the hard Baumgarte above, y stays emergent.
+            if al_cfg.w_swing_x > 0:
+                ftx = aligator.FrameTranslationResidual(ndx, nu, am.model, np.asarray(p_ref, float), int(am.foot_ids[foot_idx]))
+                cost.addCost(f"swx{foot_idx}", aligator.QuadraticResidualCost(am.space, ftx, np.diag([al_cfg.w_swing_x, 0., 0.])))
         else:
             ft = aligator.FrameTranslationResidual(ndx, nu, am.model, np.asarray(p_ref, float), int(am.foot_ids[foot_idx]))
             cost.addCost(f"swz{foot_idx}", aligator.QuadraticResidualCost(am.space, ft, np.diag([0., 0., al_cfg.w_swing_z])))

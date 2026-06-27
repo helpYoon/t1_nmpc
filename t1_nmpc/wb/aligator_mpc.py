@@ -65,8 +65,9 @@ class AligatorResult:
     num_iters: int
 
 class AligatorMPC:
-    def __init__(self, wb_cfg, al_cfg, am, gait=None):
+    def __init__(self, wb_cfg, al_cfg, am, gait=None, v_cmd=(0.0, 0.0, 0.0)):
         self.cfg = wb_cfg; self.al = al_cfg; self.am = am; self.gait = gait
+        self.v_cmd = np.asarray(v_cmd, float)   # [vx, vy, vyaw] base-velocity command (world frame)
         self.model = am  # exec uses .am-like fields; alias for runner compatibility
         self.last_solve_s = 0.0
         self._built = False
@@ -130,19 +131,21 @@ class AligatorMPC:
                 key = tuple(flags)
                 if key not in _ode_cache: _ode_cache[key] = make_ode(self.am, flags, self.al.FS)
                 return _ode_cache[key]
+            fwd = self.al.foot_place_lookahead * float(self.v_cmd[0])   # forward foot-placement offset
             init_models = []
             for t_node in node_times:
                 flags = [bool(b) for b in self.gait.contact_flags(float(t_node))]
-                x_ref_node = self._lateral_x_ref(flags)
+                x_ref_node = self._stage_x_ref(flags)
                 sw = []
                 for i, on in enumerate(flags):
                     if not on:
                         z, _, _ = self.gait.swing_z(float(t_node), i)
                         p = _rdata.oMf[int(self.am.foot_ids[i])].translation.copy(); p[2] = z
+                        p[0] += float(x0[0]) + fwd          # forward target ahead of the measured base
                         sw.append((i, p))
                 init_models.append(_ms(self.am, self.cfg, self.al, flags, x_ref_node, sw, _ode_for(flags), self.al.FS))
             self.problem = build_problem_from_stages(
-                self.am, self.al, x0, self._lateral_x_ref([True, True]), init_models)
+                self.am, self.al, x0, self._stage_x_ref([True, True]), init_models)
         else:
             # ---- Stand path: fixed double-support horizon ----
             sched = [[True, True]] * N
@@ -155,32 +158,46 @@ class AligatorMPC:
         self.vs = []; self.lams = []
         self._built = True
 
-    def _lateral_x_ref(self, flags) -> np.ndarray:
-        """Return a copy of x_ref with the base lateral (y) position shifted to the centroid
-        of the active stance feet. For single-support this places the CoM reference over the
-        stance foot instead of the symmetric midpoint, removing the lateral cost pull that
-        destabilises single-leg balance. For double-support the centroid ≈ 0 (symmetric).
+    def _stage_x_ref(self, flags) -> np.ndarray:
+        """Per-stage state reference: lateral CoM shift over the stance foot + commanded base velocity.
+
+        Lateral (position): base-y -> centroid of the active stance feet. For single-support this
+        places the CoM reference over the stance foot instead of the symmetric midpoint, removing the
+        lateral cost pull that destabilises single-leg balance. Double-support centroid ≈ 0 (symmetric).
+
+        Forward (velocity): the commanded base linear velocity is written into the velocity block so the
+        velocity-tracking cost drives the base at v_cmd. Mirrors t1_controller, where forward locomotion
+        is velocity-driven (Q[V_BASE]=3) with ZERO base x/y POSITION weight (w_base_x=0); forward foot
+        placement is then emergent from the body chasing the advancing base. base-x position is left at
+        nominal but is unweighted (w_base_x=0), so it is free to advance.
         """
         x_ref = self._x_ref.copy()
         nst = max(1, sum(flags))
         y_support = sum(self._foot_y[k] for k, on in enumerate(flags) if on) / nst
-        x_ref[1] = y_support      # base y = stance centroid
+        x_ref[1] = y_support                 # base y = stance centroid (lateral balance)
+        nq = self.am.nq
+        x_ref[nq + 0] = self.v_cmd[0]        # base vx reference (forward drive)
+        x_ref[nq + 1] = self.v_cmd[1]        # base vy reference
         return x_ref
 
-    def _make_tip_stage(self, gait_t: float):
+    def _make_tip_stage(self, gait_t: float, base_x: float = 0.0):
         """Build a StageModel for the tip of the horizon at future gait time gait_t.
 
         Uses cached ODE by contact-mode tuple and lateral-shifted x_ref so that the
         terminal cost references the CoM over the support foot (single-leg stability).
+        Swing feet get a forward x target (base_x + foot_place_lookahead*vx) so the foot
+        steps ahead of the body instead of scuffing backward.
         """
         flags = [bool(b) for b in self.gait.contact_flags(gait_t)]
-        x_ref = self._lateral_x_ref(flags)
+        x_ref = self._stage_x_ref(flags)
+        fwd = self.al.foot_place_lookahead * float(self.v_cmd[0])
         swing_refs = []
         for i, on in enumerate(flags):
             if not on:
                 z, _, _ = self.gait.swing_z(gait_t, i)
                 p = self._x_ref_rdata.oMf[int(self.am.foot_ids[i])].translation.copy()
                 p[2] = z
+                p[0] += float(base_x) + fwd          # forward target ahead of the measured base
                 swing_refs.append((i, p))
         ode = self._get_ode(flags)
         return make_stage(self.am, self.cfg, self.al, flags, x_ref, swing_refs, ode, self.al.FS)
@@ -197,7 +214,7 @@ class AligatorMPC:
         Order is critical: replaceStageCircular FIRST (updates problem structure),
         then cycleProblem (shifts solver internal arrays to match new structure)."""
         gait_t = t + self.al.N * self.cfg.dt   # future time at horizon tip
-        m = self._make_tip_stage(gait_t)
+        m = self._make_tip_stage(gait_t, base_x=float(x_meas[0]))
         d = m.createData()
         self.problem.replaceStageCircular(m)
         with _suppress_cxx_stderr():
