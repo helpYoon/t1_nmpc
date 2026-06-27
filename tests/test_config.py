@@ -1,20 +1,39 @@
 import numpy as np
-from t1_nmpc.robot.config import make_config, T1_URDF_PATH, T1_PACKAGE_DIRS, JOINT_NAMES
-import os
+from t1_nmpc.robot.config import make_config, JOINT_NAMES, LOCKED_JOINTS
 
-def test_config_dims_and_pose():
-    cfg = make_config()
-    assert cfg.nx == 71 and cfg.ndx == 70 and cfg.nf == 24 and cfg.na == 35
-    assert cfg.nodes == 14 and cfg.tau_nodes == 3
-    assert abs(cfg.nominal_base_height - 0.6734) < 1e-12
-    assert cfg.nominal_joint_pos.shape == (29,)
-    # shallow-crouch legs (knee 0.10)
-    assert abs(cfg.nominal_joint_pos[20] - 0.10) < 1e-12  # Left_Knee_Pitch idx in 29-order
-    assert cfg.Q_diag.shape == (70,)
-    assert cfg.R_diag.shape == (35 + 24 + 29,)
 
-def test_vendored_urdf_present():
-    assert os.path.isfile(T1_URDF_PATH)
-    mesh_dir = os.path.join(T1_PACKAGE_DIRS[0], "t1_description", "meshes")
-    assert len([f for f in os.listdir(mesh_dir) if f.endswith(".STL")]) == 30
-    assert len(JOINT_NAMES) == 29
+def test_dims():
+    c = make_config()
+    assert (c.n_joints, c.nq, c.nv, c.nx, c.ndx) == (27, 34, 33, 67, 66)
+    assert (c.n_feet, c.nf, c.na, c.nu) == (2, 12, 33, 45)
+    assert c.nodes == 31 and abs(c.dt - 0.035) < 1e-12
+    assert abs(c.nodes * c.dt - 1.085) < 1e-9
+
+
+def test_gait_params():
+    c = make_config()
+    assert abs(c.gait_cycle - 1.4) < 1e-12
+    assert c.switching_times == (0.0, 0.6, 0.7, 1.3, 1.4)
+    assert abs(c.swing_height - 0.08) < 1e-12
+    assert (c.v_liftoff, c.v_touchdown) == (0.05, -0.05)
+
+
+def test_weights_shapes():
+    c = make_config()
+    assert c.Q_diag.shape == (66,)        # ndx
+    assert c.R_diag.shape == (45,)        # nu
+    assert c.kp.shape == (27,) and c.kd.shape == (27,)
+    assert c.nominal_joint_pos.shape == (27,)
+
+
+def test_joint_name_tables():
+    assert len(JOINT_NAMES) == 27
+    assert LOCKED_JOINTS == ("AAHead_yaw", "Head_pitch")
+    assert "AAHead_yaw" not in JOINT_NAMES
+
+
+def test_aligator_params():
+    c = make_config()
+    assert c.al_tol == 1e-3
+    assert c.warm_max_iters >= 1 and c.cold_max_iters > c.warm_max_iters
+    assert 0.0 < c.mu_init <= 1.0
