@@ -80,6 +80,16 @@ def build_problem(am, wb_cfg, al_cfg, x0, x_ref, schedule, swing_schedule, FS=6)
     return aligator.TrajOptProblem(x0, stages, term)
 
 
+def build_problem_from_stages(am, al_cfg, x0, x_ref, stages, FS=6):
+    """Build TrajOptProblem from pre-built stage models (e.g., from build_gait_cycle slice).
+    All stages share the same nu=2*FS+nv-6=39, so stages[0].nu is used for the terminal cost."""
+    wx, _ = _weights(am, al_cfg, [True, True], FS)
+    nu = stages[0].nu
+    term = aligator.CostStack(am.space, nu)
+    term.addCost("xt", aligator.QuadraticStateCost(am.space, nu, x_ref, np.diag(wx * al_cfg.w_term_scale)))
+    return aligator.TrajOptProblem(x0, list(stages), term)
+
+
 def build_gait_cycle(am, wb_cfg, al_cfg, gait, x_ref, node_times, FS=6):
     odes = {}
     def ode_for(flags):
