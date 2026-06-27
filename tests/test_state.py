@@ -1,24 +1,32 @@
 import numpy as np
 import pinocchio as pin
-from t1_nmpc.robot.config import T1_URDF_PATH
-from t1_nmpc.wb.state import mujoco_to_freeflyer, freeflyer_to_mujoco
+from t1_nmpc.robot.config import make_config
+from t1_nmpc.robot.model import load_model, nominal_x
+from t1_nmpc.wb.state import (mujoco_to_freeflyer, extract_command, MUJOCO_TO_PIN_JOINTS)
 
-def test_state_roundtrip_under_yaw():
-    model = pin.buildModelFromUrdf(T1_URDF_PATH, pin.JointModelFreeFlyer())
-    rng = np.random.default_rng(0); nj = model.nq - 7
-    yaw = np.pi/2
-    qpos = np.empty(36)
-    qpos[0:3] = [0.31, -0.22, 0.6734]
-    qpos[3:7] = [np.cos(yaw/2), 0, 0, np.sin(yaw/2)]   # (w,x,y,z) about z
-    qpos[7:] = rng.uniform(-0.3, 0.3, nj)
-    qvel = np.empty(35)
-    qvel[0:3] = [0.7, -0.4, 0.15]    # WORLD linear
-    qvel[3:6] = [0.2, -0.13, 0.5]    # LOCAL angular
-    qvel[6:] = rng.uniform(-0.5, 0.5, nj)
-    x = mujoco_to_freeflyer(qpos, qvel, model)
-    assert x.shape == (71,)
-    # the rotation must actually be applied: body-linear differs from world-linear under yaw
-    assert np.max(np.abs(x[36:39] - qvel[0:3])) > 1e-3
-    qpos2, qvel2 = freeflyer_to_mujoco(x, model)
-    assert np.max(np.abs(qpos2 - qpos)) < 1e-12
-    assert np.max(np.abs(qvel2 - qvel)) < 1e-12
+
+def test_joint_index_map_drops_head():
+    assert MUJOCO_TO_PIN_JOINTS.shape == (27,)
+    # MuJoCo actuated joints are [head2, Larm7, Rarm7, waist, Lleg6, Rleg6] (29);
+    # reduced pin joints are the same minus the 2 head -> indices 2..28
+    np.testing.assert_array_equal(MUJOCO_TO_PIN_JOINTS, np.arange(2, 29))
+
+
+def test_base_linear_velocity_rotation():
+    cfg = make_config(); rm = load_model(cfg)
+    # 90deg yaw, world x-velocity -> body y-velocity (negative)
+    qw = np.cos(np.pi / 4); qz = np.sin(np.pi / 4)
+    qpos = np.zeros(36); qpos[2] = 0.6734; qpos[3:7] = [qw, 0, 0, qz]
+    qvel = np.zeros(35); qvel[0] = 1.0      # world +x
+    x = mujoco_to_freeflyer(qpos, qvel, rm.model)
+    # body-local linear vel: R^T @ [1,0,0]
+    R = pin.Quaternion(qw, 0, 0, qz).toRotationMatrix()
+    np.testing.assert_allclose(x[34:37], R.T @ np.array([1, 0, 0]), atol=1e-9)
+
+
+def test_extract_command_shapes():
+    cfg = make_config(); rm = load_model(cfg)
+    x1 = nominal_x(cfg, rm.model); tau0 = np.zeros(27)
+    cmd = extract_command(x1, tau0, cfg, rm)
+    assert cmd.q_des.shape == (27,) and cmd.qd_des.shape == (27,)
+    assert cmd.tau_ff.shape == (27,) and cmd.kp.shape == (27,)
