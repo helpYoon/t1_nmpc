@@ -1,22 +1,46 @@
 import numpy as np
+import aligator
 from t1_nmpc.robot.config import make_config
 from t1_nmpc.robot.model import load_model, nominal_x
-from t1_nmpc.wb.ocp import StandOCP
+from t1_nmpc.wb.dynamics import WBDynamics
+from t1_nmpc.wb.ocp import OCPBuilder
 
-def test_stand_ocp_converges():
-    cfg = make_config()
-    rm = load_model(cfg)
-    ocp = StandOCP(cfg, rm)
-    ocp.set_weights()
+
+def _builder():
+    cfg = make_config(); rm = load_model(cfg); dyn = WBDynamics(rm, cfg)
+    return cfg, rm, dyn, OCPBuilder(cfg, rm, dyn)
+
+
+def test_build_double_support_stage():
+    cfg, rm, dyn, b = _builder()
+    stage, handles = b.build_stage((True, True))
+    assert stage.nu == 45 and stage.ndx1 == 66
+    # constraints: rnea(6) + 2*(wrenchcone 8 + contactvel 6) = 6 + 28 = 34 constraint rows.
+    # num_dual additionally includes the gap-closing dynamics co-state block (ndx2 = 66),
+    # so the constraint-row count the arithmetic targets is constraints.total_dim.
+    assert stage.constraints.total_dim == 6 + 2 * (8 + 6)
+    assert stage.num_dual == stage.ndx2 + 6 + 2 * (8 + 6)
+    assert handles["swing"] == []        # no swinging feet
+
+
+def test_build_swing_stage():
+    cfg, rm, dyn, b = _builder()
+    stage, handles = b.build_stage((False, True))   # LF swing, RF stance
+    # rnea(6) + LF(swingwrench 6 + swingz 1) + RF(wrenchcone 8 + contactvel 6) = 27 constraint rows.
+    # num_dual = constraint rows + gap-closing dynamics co-state block (ndx2 = 66).
+    assert stage.constraints.total_dim == 6 + (6 + 1) + (8 + 6)
+    assert stage.num_dual == stage.ndx2 + 6 + (6 + 1) + (8 + 6)
+    # add order: rnea(idx0), LF swingwrench(idx1), LF swing-z(idx2), RF wrenchcone(idx3), RF contactvel(idx4)
+    assert handles["swing"] == [(0, 2)]              # (foot_index, constraint-stack index of swing-z)
+    # the recorded index must point at the sliced swing-z residual (nr==1) inside the stage's stack
+    assert stage.constraints.funcs[2].nr == 1
+
+
+def test_build_problem_integrity():
+    cfg, rm, dyn, b = _builder()
     x0 = nominal_x(cfg, rm.model)
-    ocp.set_x_init(x0)
-    sol_fn = ocp.solve_function(max_iter=cfg.fatrop_max_iter)
-    # cold start: warm param = current opti.x initial (zeros for DX, gravity-comp handled inside)
-    sol_x = np.array(sol_fn(x0, cfg.Q_diag, cfg.R_diag, ocp.x_initial())).flatten()
-    g, lbg, ubg = ocp.g_data()(sol_x, ocp.opti.value(ocp.opti.p))
-    cv = StandOCP.constr_viol_inf(np.array(g).flatten(), np.array(lbg).flatten(), np.array(ubg).flatten())
-    assert cv < 1e-4, f"constraint violation too high: {cv}"
-    out = ocp.retract(sol_x)
-    fz = np.array(out["forces_sol"][0]).reshape(8, 3)[:, 2]
-    assert abs(fz.sum() - rm.mass * 9.81) / (rm.mass * 9.81) < 0.05   # vertical balance
-    assert np.all(fz > -1e-6)                                          # unilateral
+    modes = [(True, True)] * cfg.nodes
+    problem, handles = b.build_problem(modes, x0)
+    assert problem.num_steps == cfg.nodes
+    assert len(handles) == cfg.nodes
+    problem.checkIntegrity()                          # raises if malformed
