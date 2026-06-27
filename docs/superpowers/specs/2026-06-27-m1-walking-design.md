@@ -57,15 +57,17 @@ AL-convergent. So the formulation choice is correct, not merely viable.
 
 ## 4. The formulation (Fatrop port verbatim, on aligator)
 
-**Minimal-change principle:** the `whole_body_rnea` formulation is the **Fatrop port's, unchanged** —
-8-corner contact forces, RNEA `τ_base=0` path constraint, swing-z spline, footstep heuristic, gait,
-discretization. Swapping Fatrop→aligator forces **exactly three** small changes, each a proven consequence
-of aligator's augmented Lagrangian (not gratuitous): **(i)** contact velocity per-foot 6D, not per-corner
-(per-corner is rank-deficient — 12 eqs / 6-DOF rigid foot — *and* less paper-faithful; the paper enforces
-one velocity constraint per foot); **(ii)** swing-z as a *soft* cost, not a hard equality (hard stalls the
-AL outer loop — also the foot-lift workstream, §6.1); **(iii)** joint torque recovered *post-hoc* via RNEA,
-no `tau_nodes` decision vars (the receding shift makes `tau_nodes` a warm-start trap). Everything else is
-the Fatrop port.
+**Minimal-change principle:** the `whole_body_rnea` formulation stays the **paper's / Fatrop port's** —
+8-corner contact forces, RNEA `τ_base=0` path constraint, **hard swing-z spline equality**, footstep
+heuristic, gait. Swapping Fatrop→aligator forces only:
+- **(i) contact velocity per-foot 6D, not per-corner** — a *correction toward the paper* (per-corner is
+  rank-deficient on a 6-DOF rigid foot; the paper enforces one velocity constraint per foot).
+- **(ii) joint torque post-hoc via RNEA with torque limits SOFT/relaxed**, not the hard `tau_nodes` box —
+  the **only genuine divergence**, forced because `tau_nodes` is a warm-start trap *and* the hard box is
+  cold-infeasible in dynamic phases (spike: CV~31). Logged as a divergence (§10).
+
+**Swing-z stays a HARD equality** (paper-faithful); making it warm-start on aligator's AL is the foot-lift
+workstream (§6.1) — the crux of M1, not a downgrade to soft. Everything else is the paper, verbatim.
 
 - **Model:** `buildReducedModel(freeflyer T1, lock AAHead_yaw + Head_pitch)` → **27 joints, nq=34, nv=33**
   (head-lock per the standing directive). Keep the **8 corner `OP_FRAME`s** (4 per foot, the Fatrop sole
@@ -81,10 +83,11 @@ the Fatrop port.
 - **Contact:** per-corner friction cone `fz≥0` and `μ²fz² ≥ fx²+fy²` (`NegativeOrthant`; the 8 unilateral
   corners give the support polygon / CoP — no separate wrench-cone); **per-foot 6D `FrameVelocityResidual
   == 0`** for each stance foot (LWA).
-- **Swing + footstep:** swing-z as a **soft `QuadraticResidualCost`** on the Baumgarte z-velocity spline
-  (`get_spline_vel_z`); **footstep placement** (restored) — a Raibert target
-  `p_foot_xy = stance_xy + ½·T_step·v_des + k·(v_meas − v_des)` + nominal stance half-width, as a soft cost
-  on the swing foot's xy through swing. Forward command via `base_vel_des` (track `vx` in the velocity cost).
+- **Swing + footstep:** swing-z as a **HARD `EqualityConstraintSet`** on the Baumgarte z-velocity spline
+  (`get_spline_vel_z`) — paper-faithful (`wb-mpc-locoman ocp.py:173-182`, `subject_to(... == 0)`); the
+  AL-stall its hard form hit in the spike is the §6.1 foot-lift crux. **Footstep placement** (restored) —
+  a Raibert target `p_foot_xy = stance_xy + ½·T_step·v_des + k·(v_meas − v_des)` + nominal stance half-width,
+  as a **soft cost** on the swing foot's xy through swing. Forward command via `base_vel_des` (track `vx`).
 - **Solver:** `SolverProxDDP(mu_init=1e-4)`, `LQ_SOLVER_SERIAL` (cpin residuals are Python → GIL),
   `ROLLOUT_LINEAR`; warm ticks cap `max_iters≈6`, `target_tol=1e-2` (mirroring `g_max=1e-2`, `g_min=1e-6`).
 - **Receding warm carry:** `replaceStageCircular(tip @ gait_t = t+N·dt)` then `cycleProblem(...)` *before*
@@ -96,22 +99,32 @@ force representation — but the plan's first task re-confirms the gate with the
 
 ## 5. Discretization & gait
 
-`dt = 0.035` uniform, `N ≈ 20` → horizon ≈ 0.7 s (the spike-proven warm-start config). Biped walk gait
-`cycle = 1.4 s` (`LF[0,0.6) → dbl[0.6,0.7) → RF[0.7,1.3) → dbl[1.3,1.4)`), preserving **cycle > horizon**.
-The receding loop advances the gait clock one knot per tick. (aligator handles the uniform grid cleanly;
-the Fatrop-era adaptive event-aware grid is not needed for AL-DDP.) **Horizon is tunable up** toward
-~1.1 s (`N ≈ 31`, the t1_controller value) for **balance anticipation** in the walk phase — AL-DDP scales
-far better than the IPM did, so the longer horizon is affordable; tune it against the lateral-balance work.
+`dt` base 0.035; **event-aware adaptive grid** (fine at t=0 + each contact-switch time, coarse in steady
+single-support) → ~**N=17** vs ~31 uniform. The node-count reduction speeds **every** solver (the
+per-iteration Riccati pass *and* the per-node cpin residual evals scale ~linearly in N) — it is *not*
+Fatrop-specific, so we keep it. Biped walk gait `cycle = 1.4 s`
+(`LF[0,0.6) → dbl[0.6,0.7) → RF[0.7,1.3) → dbl[1.3,1.4)`), preserving **cycle > horizon** (~0.7–1.1 s;
+horizon tunable up toward 1.1 s for balance anticipation, affordable since AL-DDP scales far better than the
+IPM did).
+
+**Caveat — must validate (the grid ⊥ cheap-cycling tension):** aligator's cheap receding warm-start
+(`replaceStageCircular`+`cycleProblem`) cleanly rotates a *uniform* grid; an event-aware grid's
+fine-nodes-at-switches drift through the horizon as the gait advances, so it must be **gait-phase-stationary**
+(dt pattern periodic with the 1.4 s cycle, horizon an integer knot count) to cycle without per-tick rebuilds.
+The spike proved the warm-start gate on a *uniform* grid; the plan's first solver task **re-validates the
+cyclic warm-start on the gait-phase-stationary adaptive grid**, with **uniform as the fallback** if it can't
+cycle cleanly.
 
 ## 6. The three open M1 problems (honest — the real milestone work)
 
 The spike resolved the **solver/formulation foundation**; the *locomotion* is not solved by it:
 
-1. **Foot-lift (swing-z).** A *hard* swing-z Baumgarte equality stalls the AL outer loop (al=2, CV~3.8e-2 —
-   the index-2 pathology); a *soft* swing-z cost warm-starts cleanly but does not lift the foot at low
-   iters. **Foot-lift-while-warm-startable is unsolved** — its own workstream. Candidates: a C++ swing
-   residual, a position+velocity-level (non-accel) swing constraint, or a higher-weight swing cost with a
-   few extra iters at swing nodes only.
+1. **Foot-lift — HARD swing-z on aligator (THE CRUX).** The paper's swing-z is a hard equality and **we keep
+   it hard** (no downgrade to soft). The spike found *its* hard accel-Baumgarte residual stalls aligator's AL
+   (al=2, CV~3.8e-2 — index-2), so **making the hard swing-z warm-start is the central, unsolved M1 work** —
+   the one thing the verification spike did not crack. Candidates: an *input-coupled* accel-Baumgarte (the
+   old port claimed this form *is* AL-enforceable), a C++ swing residual, AL/weight conditioning, or a
+   position+velocity-level swing constraint. This is the primary M1 risk.
 2. **Lateral balance (closed loop).** The warm-start gate was an *idealized* loop (`x_meas` = the solver's
    own node-1; no MuJoCo feedback). Real closed-loop lateral balance still needs the MuJoCo test and, very
    likely, an **explicit lateral CoM-sway reference**. The OCP now *solves* single support (unlike the old
@@ -129,17 +142,27 @@ robot/
   model.py    rewrite: buildReducedModel(lock head) + KEEP 8 corner OP_FRAMEs (forces) + a per-foot frame
               (6D velocity) + mass.
 wb/
-  dynamics.py rewrite: cpin RNEA functions (base-6 residual w/ 8 accumulated corner forces + Jacobians +
-              post-hoc torque); swing-z cpin fn.
-  ocp.py      rewrite: aligator TrajOptProblem builder — DoubleIntODE + IntegratorSemiImplEuler, the
-              RneaBaseResidual EqualityConstraintSet, per-corner friction cones (8), per-foot 6D
-              FrameVelocityResidual, soft swing-z cost, footstep cost, tracking cost; per-stage by gait
-              flags. (remove StandOCP/Fatrop.)
-  mpc.py      rewrite: AligatorMPC — SolverProxDDP(serial), reset (cold), step (warm via
-              replaceStageCircular+cycleProblem, xs/us shift, vs/lams carry), command extraction. (remove
-              WholeBodyMPC/to_function.)
-  gait.py     rewrite/extend: biped walk schedule (cycle 1.4 s) + stand (all double-support).
-  state.py    rewrite: MuJoCo<->pinocchio for the reduced 27-joint model; command (q_des,qd_des,tau_ff).
+  dynamics.py   cpin symbolic PRIMITIVES only: whole-body RNEA (+ exact Jacobians, 8 accumulated corner
+                forces, post-hoc joint torque), swing-z Baumgarte residual, frame velocities.
+  constraint.py NEW (refactor — paper-auditable). Each HARD constraint a named StageFunction + ConstraintSet
+                builder, **each docstring citing the paper §/eq + flagging any divergence**:
+                  rnea_base       EqualityConstraintSet   [paper: base underactuation τ_rnea[:6]=0]
+                  contact_velocity per-foot 6D, EqualitySet [paper: zero contact velocity, per foot]
+                  friction_cone   per corner (8), NegativeOrthant [paper: friction cone; CoP via corners]
+                  swing_z         HARD EqualityConstraintSet [paper: swing z-velocity spline]
+                  torque_limit    SOFT/relaxed  [DIVERGENCE — paper hard tau_nodes box; §10]
+                  joint_pos/vel_limit  [paper: state/input bounds]
+  cost.py       NEW (refactor — paper-auditable). Each cost a named builder, **each paper-cited**:
+                  state_tracking (Q) [paper Q] · input_reg (R) [paper R] · base_velocity (vx command)
+                  · footstep_placement (Raibert — flagged: our addition, not in the quadruped paper).
+  ocp.py        rewrite: THIN assembler — builds the aligator TrajOptProblem by wiring cost.py + constraint.py
+                per stage from the gait flags (DoubleIntODE + IntegratorSemiImplEuler). No physics here.
+                (remove StandOCP/Fatrop.)
+  mpc.py        rewrite: AligatorMPC — SolverProxDDP(serial), reset (cold), step (warm via
+                replaceStageCircular+cycleProblem, xs/us shift, vs/lams carry), command extraction. (remove
+                WholeBodyMPC/to_function.)
+  gait.py       rewrite/extend: biped walk schedule (cycle 1.4 s) + stand (all double-support).
+  state.py      rewrite: MuJoCo<->pinocchio for the reduced 27-joint model; command (q_des,qd_des,tau_ff).
 runtime/      kept; repoint to the new mpc/state.
 sim/
   mujoco_runtime.py  kept; state read + command for the reduced model.
@@ -157,32 +180,40 @@ tools/codegen_solver.py  REMOVE (Fatrop-only, impractical).
 
 ## 9. Incremental build
 
-1. **Port the proven solver/formulation** into `robot/model.py`+`robot/config.py`+`wb/{dynamics,ocp,mpc}.py`
-   (RNEA-ID + per-foot 6D + ProxDDP). Verify the **warm-start gate in-tree** (the spike recipe).
+1. **Port the proven solver/formulation + the paper-auditable refactor** into `robot/{model,config}.py` and
+   `wb/{dynamics,constraint,cost,ocp,mpc}.py` (RNEA-ID + 8-corner forces + per-foot-6D velocity + ProxDDP;
+   each cost/constraint paper-cited). Verify the **warm-start gate in-tree** AND that the **event-adaptive
+   gait-phase-stationary grid cycles cleanly** under `cycleProblem` (uniform fallback).
 2. **Re-home M0 stand** on aligator (all-double-support); closed-loop MuJoCo stand passes.
-3. **Foot-lift** workstream (swing-z that lifts *and* warm-starts).
+3. **Foot-lift — make the HARD swing-z warm-start on aligator** (the crux; §6.1).
 4. **Forward walk + lateral balance** (closed-loop MuJoCo; add the CoM-sway reference as needed) — the gate.
-5. Docs + divergences. (C++ RNEA residual + real-time speed is a *separate, later* effort.)
+5. Docs: the **paper↔code mapping table** + divergences. (C++ RNEA residual + real-time is a separate effort.)
 
-## 10. Divergences to log (`docs/2026-06-25-t1controller-divergences.md`)
+## 10. Divergences + the paper↔code map
 
-- Solver: aligator ProxDDP (AL-DDP) — replaces the Fatrop port; chosen because IPM cannot warm-start the
-  receding walk and acados cannot carry the hard stagewise equality.
-- **8-corner 3D contact force model KEPT** (paper-faithful). Only the contact *velocity* constraint moves to
-  **per-foot 6D** (one `FrameVelocity==0` per foot), replacing the Fatrop port's per-corner velocity
-  (rank-deficient — and the paper itself is per-foot).
-- **Swing-z soft** (cost), not a hard equality (hard stalls AL — the foot-lift open problem).
-- **Torque post-hoc** via RNEA, no `tau_nodes` decision vars (warm-start trap); torque limits, if needed,
-  as soft penalties (a paper divergence to revisit).
+Logged in `docs/2026-06-25-t1controller-divergences.md`; the plan also emits a **paper↔code mapping table**
+(`docs/2026-06-27-paper-mapping.md`) listing every [arXiv:2511.19709] cost/constraint → our
+`cost.py`/`constraint.py` unit → match/divergence, for at-a-glance audit.
+
+- **Solver:** aligator ProxDDP (AL-DDP) replaces the Fatrop port — IPM cannot warm-start the receding walk;
+  acados cannot carry the hard stagewise equality.
+- **8-corner 3D contact force model KEPT** (paper-faithful). Contact *velocity* → **per-foot 6D** (one
+  `FrameVelocity==0` per foot): a *correction* (per-corner is rank-deficient; the paper is already per-foot),
+  **not** a divergence.
+- **Swing-z stays a HARD equality** (paper-faithful) — no divergence; the aligator AL-stall is the §6.1
+  foot-lift work, not a downgrade.
+- **Torque limits SOFT/relaxed — the one real divergence:** post-hoc RNEA torque, no hard `tau_nodes` box,
+  forced because `tau_nodes` is a warm-start trap *and* the hard box is cold-infeasible in dynamic phases.
 - **Head locked always** (27-joint model); arms locked for the first walk.
 
 ## 11. Scope / risks
 
-- **In:** in-place Fatrop→aligator rewrite; RNEA-ID + per-foot 6D; ProxDDP receding warm-start; re-homed
-  stand; foot-lift + forward-walk + closed-loop balance.
+- **In:** in-place Fatrop→aligator rewrite (structure preserved, not additive); the `cost.py`/`constraint.py`
+  paper-auditable refactor; RNEA-ID + 8-corner forces + per-foot-6D velocity + hard swing-z; ProxDDP receding
+  warm-start; event-adaptive grid; re-homed stand; foot-lift + forward-walk + closed-loop balance.
 - **Out / deferred:** C++ RNEA residual + real-time (the iteration gate already passes in sim, serial);
   arm-swing (arms locked first); turning / lateral / variable-speed commands; hardware.
-- **Risks:** foot-lift-while-warm-startable is unsolved (own workstream); closed-loop lateral balance is the
-  genuine M1 wall (now on a *convergent* single-support OCP, but unproven in the plant); the `vs/lams`
-  carry protocol is exact-or-diverges; serial cpin residuals are ~50–90 ms/tick (sim-only until C++).
-```
+- **Risks:** **HARD swing-z on aligator is unsolved — the crux** (the spike's hard form stalled the AL);
+  closed-loop lateral balance is the genuine M1 wall (now on a *convergent* single-support OCP, but unproven
+  in the plant); the event-adaptive grid must cycle cleanly under `cycleProblem` (uniform fallback); the
+  `vs/lams` carry protocol is exact-or-diverges; serial cpin residuals are ~50–90 ms/tick (sim-only until C++).
