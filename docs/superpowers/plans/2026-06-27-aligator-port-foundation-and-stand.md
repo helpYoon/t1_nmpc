@@ -1179,7 +1179,8 @@ git commit -m "feat(gait): walk schedule (cycle 1.4s) + stand + cubic swing z-ve
 - Consumes: everything from Tasks 1–6.
 - Produces an `OCPBuilder` class:
   - `__init__(self, cfg, rm, dyn)`.
-  - `build_stage(mode: FootMode) -> (aligator.StageModel, dict)` where the dict records the per-stage mutable handles (`swing_z_base` per swinging foot) for `setReference`. Stage carries: cost (state_tracking + input_reg + arm_to_nominal), RNEA-base equality, per-foot stance (wrench-cone NEG + contact-velocity EQ) or swing (swing-wrench EQ + swing-z EQ). **Gap-closing dynamics is the StageModel dynamics; equality constraints are added via `addConstraint` (order within a stage does not matter for aligator, unlike Fatrop).**
+  - `build_stage(mode: FootMode) -> (aligator.StageModel, dict)` where the dict records, per swinging foot, the tuple `(foot_index, constraint_stack_index)` — the **integer position of the swing-z constraint in the stage's `ConstraintStack`** (NOT the residual object). Stage carries: cost (state_tracking + input_reg + arm_to_nominal), RNEA-base equality (constraint index 0), then per-foot stance (wrench-cone NEG + contact-velocity EQ) or swing (swing-wrench EQ + swing-z EQ). **Gap-closing dynamics is the StageModel dynamics; equality constraints are added via `addConstraint` (order within a stage does not matter for aligator, unlike Fatrop).**
+  - **VERIFIED GOTCHA (why index, not handle):** `addConstraint` **deep-copies** the residual into the stage, so the original `swing_z_residual` `base` object is *disconnected* from the copy the solver evaluates (confirmed: setting the original's `vref` does not change the problem's copy). The per-tick swing-z target must therefore be written **through the problem**: `problem.stages[i].constraints.funcs[cidx].func.vref = pin.Motion(...)` — where `funcs[cidx]` is the `UnaryFunctionSliceXpr` and its `.func` is the wrapped `FrameVelocityResidual` (use the `vref` property, NOT the deprecated `setReference`). `build_stage` therefore records the integer `cidx`, and `_refresh_refs` (Task 8) reaches the residual through `problem.stages`.
   - `terminal_cost() -> aligator.CostAbstract`.
   - `build_problem(modes: list[FootMode], x0) -> (aligator.TrajOptProblem, list[dict])`.
 
@@ -1214,7 +1215,10 @@ def test_build_swing_stage():
     stage, handles = b.build_stage((False, True))   # LF swing, RF stance
     # rnea(6) + LF(swingwrench 6 + swingz 1) + RF(wrenchcone 8 + contactvel 6) = 27
     assert stage.num_dual == 6 + (6 + 1) + (8 + 6)
-    assert len(handles["swing"]) == 1                # LF swing-z handle present
+    # add order: rnea(idx0), LF swingwrench(idx1), LF swing-z(idx2), RF wrenchcone(idx3), RF contactvel(idx4)
+    assert handles["swing"] == [(0, 2)]              # (foot_index, constraint-stack index of swing-z)
+    # the recorded index must point at the sliced swing-z residual (nr==1) inside the stage's stack
+    assert stage.constraints.funcs[2].nr == 1
 
 
 def test_build_problem_integrity():
@@ -1275,17 +1279,18 @@ class OCPBuilder:
         stage = aligator.StageModel(self._cost(), self._discrete_dynamics())
         stage.addConstraint(C.RneaBaseResidual(cfg.ndx, cfg.nu, self._rnea_funcs), C.EQ())
         handles = {"swing": []}
+        cidx = 1                                   # rnea_base occupies constraint-stack index 0
         for k, in_contact in enumerate(mode):
             if in_contact:
                 stage.addConstraint(
                     C.WrenchConeResidual(cfg.ndx, cfg.nu, k, cfg.friction_mu,
-                                         cfg.half_len, cfg.half_width), C.NEG())
-                stage.addConstraint(C.contact_velocity_residual(rm, cfg.ndx, cfg.nu, k), C.EQ())
+                                         cfg.half_len, cfg.half_width), C.NEG()); cidx += 1
+                stage.addConstraint(C.contact_velocity_residual(rm, cfg.ndx, cfg.nu, k), C.EQ()); cidx += 1
             else:
-                stage.addConstraint(C.SwingWrenchResidual(cfg.ndx, cfg.nu, k), C.EQ())
-                sliced, base = C.swing_z_residual(rm, cfg.ndx, cfg.nu, k)
+                stage.addConstraint(C.SwingWrenchResidual(cfg.ndx, cfg.nu, k), C.EQ()); cidx += 1
+                sliced, _ = C.swing_z_residual(rm, cfg.ndx, cfg.nu, k)   # discard the disconnected base
                 stage.addConstraint(sliced, C.EQ())
-                handles["swing"].append((k, base))
+                handles["swing"].append((k, cidx)); cidx += 1            # record swing-z stack index
         return stage, handles
 
     def terminal_cost(self):
@@ -1421,11 +1426,15 @@ class AligatorMPC:
         self._warm = None      # (xs, us, vs, lams)
 
     def _refresh_refs(self, t: float):
+        # Reach each swing-z residual THROUGH the problem (addConstraint deep-copied it; the
+        # original builder handle is disconnected). funcs[cidx] is the slice; .func is the
+        # wrapped FrameVelocityResidual; set its vref property (NOT deprecated setReference).
         for i, handles in enumerate(self.handles):
-            for (foot_index, base) in handles["swing"]:
+            for (foot_index, cidx) in handles["swing"]:
                 phase = self.gait.swing_phase(t + i * self.cfg.dt, foot_index)
                 vz = v_z_ref(phase, self.cfg) if phase is not None else 0.0
-                base.setReference(pin.Motion(np.array([0, 0, vz, 0, 0, 0.0])))
+                self.problem.stages[i].constraints.funcs[cidx].func.vref = \
+                    pin.Motion(np.array([0, 0, vz, 0, 0, 0.0]))
 
     def reset(self, x0) -> None:
         x0 = np.asarray(x0, dtype=np.float64)
