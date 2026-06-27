@@ -32,7 +32,7 @@ class WholeBodyMPC:
         self._gdata = self.ocp.g_data()
         self._warm = None        # last opti.x solution vector (warm start)
 
-    def reset(self, x0):
+    def reset(self, x0) -> None:
         x0 = np.asarray(x0, dtype=np.float64)
         self.ocp.set_x_init(x0)
         sol = np.array(self._solve(x0, self.cfg.Q_diag, self.cfg.R_diag,

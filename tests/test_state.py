@@ -1,6 +1,6 @@
 import numpy as np
 import pinocchio as pin
-from t1_nmpc.robot.config import make_config, T1_URDF_PATH
+from t1_nmpc.robot.config import T1_URDF_PATH
 from t1_nmpc.wb.state import mujoco_to_freeflyer, freeflyer_to_mujoco
 
 def test_state_roundtrip_under_yaw():

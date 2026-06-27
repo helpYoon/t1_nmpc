@@ -139,7 +139,7 @@ def make_config(**overrides) -> MPCConfig:
 
 @dataclass
 class JointCommand:
-    """29-joint command to the control layer: tau = tau_ff + kp*(q_des-q) - kd*(qd_des-qd)."""
+    """29-joint command to the control layer: tau = tau_ff + kp*(q_des-q) + kd*(qd_des-qd)."""
     q_des: np.ndarray    # (29,)
     qd_des: np.ndarray   # (29,)
     tau_ff: np.ndarray   # (29,)

@@ -13,7 +13,7 @@ from .config import MPCConfig, T1_URDF_PATH, ANKLE_ROLL_FRAMES
 class RobotModel:
     model: pin.Model
     data: pin.Data
-    corner_frame_ids: tuple
+    corner_frame_ids: tuple[int, ...]
     mass: float
     trunk_frame_id: int
     tau_max: np.ndarray   # (29,)

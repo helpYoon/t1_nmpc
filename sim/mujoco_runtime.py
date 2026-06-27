@@ -1,6 +1,6 @@
 """MuJoCo closed-loop runtime for t1_nmpc.
 
-Decoupled rates: physics @ 2000 Hz, PD control @ 500 Hz, MPC @ 40 Hz (latest-policy
+Decoupled rates: physics @ 2000 Hz, PD control @ 500 Hz, MPC @ 50 Hz (latest-policy
 zero-order-hold). Mirrors wb_humanoid robot_runtime/mujoco_sim_interface but as a
 single-process deterministic interleaved scheduler (gate path; threaded path reserved).
 
@@ -198,12 +198,12 @@ class MujocoRuntime:
     def reset_to_nominal(self):
         """Place the robot standing with its feet ON the floor.
 
-        `nominal_base_height` (0.62) is the MPC *reference* height, NOT the physical feet-on-floor
-        height of the crouch (~0.66). Spawning the base at 0.62 sinks the feet ~4-5 cm through the
-        floor (z=0), and MuJoCo's contact response launches the robot into the air (it flips → the
-        solver fails on tick 1). Instead we spawn ABOVE the floor and let gravity settle the feet
-        onto it under a joint-PD hold — robust for any joint config, and the settled stand matches
-        the MPC's crouch reference.
+        `nominal_base_height` (0.6734) is the MPC *reference* base height. Spawning the base exactly
+        at 0.6734 puts the feet right at the floor (z=0); the slightest penetration makes MuJoCo's
+        contact response launch the robot into the air (it flips → the solver fails on tick 1).
+        Instead we spawn ABOVE the floor and let gravity settle the feet onto it under a joint-PD
+        hold — robust for any joint config, and the settled stand matches the MPC's crouch reference
+        (0.6734).
         """
         q0 = MJ_JOINT_QPOS0
         njp = np.asarray(self.cfg.nominal_joint_pos, dtype=np.float64)

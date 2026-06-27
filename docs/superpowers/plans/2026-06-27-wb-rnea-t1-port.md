@@ -195,7 +195,7 @@ def make_config(**overrides) -> MPCConfig:
 
 @dataclass
 class JointCommand:
-    """29-joint command to the control layer: tau = tau_ff + kp*(q_des-q) - kd*(qd_des-qd)."""
+    """29-joint command to the control layer: tau = tau_ff + kp*(q_des-q) + kd*(qd_des-qd)."""
     q_des: np.ndarray    # (29,)
     qd_des: np.ndarray   # (29,)
     tau_ff: np.ndarray   # (29,)
@@ -991,7 +991,7 @@ def test_closed_loop_stand_holds():
 """Closed-loop MuJoCo stand under the whole_body_rnea (Fatrop) MPC.
 
 Control: at mpc_hz solve -> JointCommand (q_des, qd_des, tau_ff); at control_hz apply
-tau = tau_ff + kp*(q_des - q) - kd*(qd_des - qd); physics at physics_hz."""
+tau = tau_ff + kp*(q_des - q) + kd*(qd_des - qd); physics at physics_hz."""
 from __future__ import annotations
 
 import numpy as np
@@ -1031,7 +1031,7 @@ def run_stand(cfg: MPCConfig, duration: float = 2.0, view: bool = False, gif: st
         if k % rt.control_decim == 0 and cmd is not None:           # control tick
             q = np.array(rt.mj_data.qpos[MJ_JOINT_QPOS0:MJ_JOINT_QPOS0 + 29])
             qd = np.array(rt.mj_data.qvel[MJ_JOINT_QVEL0:MJ_JOINT_QVEL0 + 29])
-            tau = cmd.tau_ff + cmd.kp * (cmd.q_des - q) - cmd.kd * (cmd.qd_des - qd)
+            tau = cmd.tau_ff + cmd.kp * (cmd.q_des - q) + cmd.kd * (cmd.qd_des - qd)
             rt._apply_torque(tau)
         rt.step_physics()
         tilts.append(_tilt_deg(rt.mj_data.qpos))

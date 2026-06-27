@@ -1,10 +1,11 @@
 """Closed-loop MuJoCo stand under the whole_body_rnea (Fatrop) MPC.
 
 Control: at mpc_hz solve -> JointCommand (q_des, qd_des, tau_ff); at control_hz apply
-tau = tau_ff + kp*(q_des - q) - kd*(qd_des - qd); physics at physics_hz."""
+tau = tau_ff + kp*(q_des - q) + kd*(qd_des - qd); physics at physics_hz."""
 from __future__ import annotations
 
 import numpy as np
+import mujoco
 import pinocchio as pin
 
 from t1_nmpc.robot.config import MPCConfig
@@ -19,7 +20,22 @@ def _tilt_deg(qpos):
     return float(np.degrees(np.arccos(np.clip(R[2, 2], -1.0, 1.0))))   # angle of body-z from world-z
 
 
-def run_stand(cfg: MPCConfig, duration: float = 2.0, view: bool = False, gif: str = None) -> dict:
+def _measured_grf_z(m, d) -> float:
+    """MuJoCo-measured vertical ground reaction [N]: sum of world-frame vertical contact force
+    over all contacts. mj_contactForce returns force in the contact frame (f6[0]=normal,
+    f6[1:3]=tangent); contact.frame rows are those axes in world coords, so f_world = frame.T @ f6[:3].
+    At a static stand this reads ~ m*g (the floor holding the robot up)."""
+    total = 0.0
+    f6 = np.zeros(6)
+    for i in range(d.ncon):
+        mujoco.mj_contactForce(m, d, i, f6)
+        frame = d.contact[i].frame.reshape(3, 3)     # rows: normal, tangent1, tangent2 (world)
+        f_world = frame.T @ f6[:3]
+        total += f_world[2]
+    return abs(total)
+
+
+def run_stand(cfg: MPCConfig, duration: float = 4.0) -> dict:
     rm = load_model(cfg)
     rt = MujocoRuntime(cfg, rm)
     rt.reset_to_nominal()
@@ -27,7 +43,7 @@ def run_stand(cfg: MPCConfig, duration: float = 2.0, view: bool = False, gif: st
     mpc.reset(nominal_x(cfg, rm.model))
 
     cmd = None
-    solve_ms, fz_ratios, tilts = [], [], []
+    solve_ms, fz_ratios, grf_ratios, tilts = [], [], [], []
     mg = rm.mass * 9.81
     n_steps = int(round(duration * cfg.physics_hz))
     fell = False
@@ -38,10 +54,11 @@ def run_stand(cfg: MPCConfig, duration: float = 2.0, view: bool = False, gif: st
             cmd = res.command
             solve_ms.append(res.solve_time * 1e3)
             fz_ratios.append(res.forces0.reshape(8, 3)[:, 2].sum() / mg)
+            grf_ratios.append(_measured_grf_z(rt.mj_model, rt.mj_data) / mg)   # measured PLANT GRF
         if k % rt.control_decim == 0 and cmd is not None:           # control tick
             q = np.array(rt.mj_data.qpos[MJ_JOINT_QPOS0:MJ_JOINT_QPOS0 + 29])
             qd = np.array(rt.mj_data.qvel[MJ_JOINT_QVEL0:MJ_JOINT_QVEL0 + 29])
-            tau = cmd.tau_ff + cmd.kp * (cmd.q_des - q) - cmd.kd * (cmd.qd_des - qd)
+            tau = cmd.tau_ff + cmd.kp * (cmd.q_des - q) + cmd.kd * (cmd.qd_des - qd)
             rt._apply_torque(tau)
         rt.step_physics()
         tilts.append(_tilt_deg(rt.mj_data.qpos))
@@ -52,6 +69,9 @@ def run_stand(cfg: MPCConfig, duration: float = 2.0, view: bool = False, gif: st
         "fz_ratio_p50": float(np.median(fz_ratios)) if fz_ratios else 0.0,
         "fz_ratio_min": float(np.min(fz_ratios)) if fz_ratios else 0.0,
         "fz_ratio_max": float(np.max(fz_ratios)) if fz_ratios else 0.0,
+        "grf_ratio_p50": float(np.median(grf_ratios)) if grf_ratios else 0.0,
+        "grf_ratio_min": float(np.min(grf_ratios)) if grf_ratios else 0.0,
+        "grf_ratio_max": float(np.max(grf_ratios)) if grf_ratios else 0.0,
         "max_tilt_deg": float(np.max(tilts)) if tilts else 0.0,
         "fell": fell,
         "solve_p90_ms": float(np.percentile(solve_ms, 90)) if solve_ms else 0.0,

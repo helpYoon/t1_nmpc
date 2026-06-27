@@ -5,7 +5,7 @@ import numpy as np
 import casadi as ca
 
 from ..robot.config import MPCConfig
-from ..robot.model import RobotModel
+from ..robot.model import RobotModel, nominal_x
 from .dynamics import WBDynamics
 
 
@@ -47,8 +47,7 @@ class StandOCP:
         self.Q_diag = opti.parameter(self.ndx)
         self.R_diag = opti.parameter(self.na + self.nf + self.nj)
 
-        q0 = self.x_init[:self.nq]
-        x_des = ca.vertcat(q0, ca.MX.zeros(self.nv))      # track current q, zero velocity
+        x_des = ca.DM(nominal_x(self.cfg, self.rm.model))  # nominal stand: base@0.6734 upright, nominal joints, zero vel
         self.dx_des = self.dyn.state_difference()(self.x_init, x_des)
         f_grav = self.mass * 9.81 / self.cfg.n_corners
         self.f_des = ca.vertcat(*[ca.DM([0, 0, f_grav]) for _ in range(self.cfg.n_corners)])
