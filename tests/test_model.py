@@ -1,6 +1,6 @@
 import numpy as np
 import pinocchio as pin
-from t1_nmpc.robot.config import make_config
+from t1_nmpc.robot.config import make_config, ANKLE_ROLL_FRAMES
 from t1_nmpc.robot.model import load_model, nominal_q, nominal_x
 
 
@@ -20,9 +20,12 @@ def test_sole_frames_present_and_placed():
         assert rm.model.frames[fid].type == pin.FrameType.OP_FRAME
     # foot_joint_placements parent the sole frames at the ankle-roll joints
     assert len(rm.foot_joint_placements) == 2
-    for (jid, jMf) in rm.foot_joint_placements:
+    for k, (jid, jMf) in enumerate(rm.foot_joint_placements):
         assert isinstance(jMf, pin.SE3)
         np.testing.assert_allclose(jMf.translation, [0.005, 0.0, -0.030], atol=1e-9)
+        # invariant: sole frame is parented at the ankle-roll joint
+        ankle_fid = rm.model.getFrameId(ANKLE_ROLL_FRAMES[k])
+        assert jid == rm.model.frames[ankle_fid].parentJoint
     assert rm.half_extents == (0.1065, 0.05)
 
 
@@ -40,3 +43,4 @@ def test_nominal_consistency():
 def test_mass_positive():
     rm = load_model(make_config())
     assert 20.0 < rm.mass < 60.0
+    assert np.all(rm.tau_max > 0.0)

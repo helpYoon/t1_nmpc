@@ -36,7 +36,7 @@ def load_model(cfg: MPCConfig) -> RobotModel:
         afid = model.getFrameId(ankle)
         parent_joint = model.frames[afid].parentJoint
         ankle_placement = model.frames[afid].placement           # ankle frame wrt parent joint
-        t = ankle_placement.act(sole_offset)
+        t = ankle_placement.act(sole_offset)  # offset is ankle-frame-relative (matches the prior corner-frame model); transformed to the parent joint. For the current URDF the ankle frame placement is identity, so t == sole_offset.
         jMf = pin.SE3(np.eye(3), t)                               # sole frame wrt parent joint
         frame = pin.Frame(f"{ankle}_sole", parent_joint, afid, jMf, pin.FrameType.OP_FRAME)
         sole_ids.append(model.addFrame(frame))
