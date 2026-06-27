@@ -126,6 +126,7 @@ class StandOCP:
 
     def _fatrop_opts(self, max_iter):
         return {"expand": True, "structure_detection": "auto", "debug": False,
+                "print_time": False,
                 "fatrop": {"print_level": 0, "max_iter": int(max_iter),
                            "tol": self.cfg.fatrop_tol, "mu_init": self.cfg.fatrop_mu_init,
                            "warm_start_init_point": True,
