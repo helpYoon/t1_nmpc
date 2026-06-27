@@ -1,4 +1,14 @@
-"""CasADi Opti transcription of whole_body_rnea for T1 stand (8 corners all in contact)."""
+"""CasADi Opti transcription of whole_body_rnea for T1 walk (gated 8-corner contact).
+
+WalkOCP generalizes the M0 StandOCP: per-foot contact/swing schedules are opti
+parameters that gate the per-corner force constraints, the stance corner-velocity
+constraints, and the swing foot-center z-velocity (cubic spline) constraint.
+Schedules + base-velocity + footstep targets are passed to the compiled solver_fn
+as ARGUMENTS so the one function is reused across MPC ticks (Task 6).
+
+StandOCP is kept as a thin subclass that bakes all-stance schedules and exposes the
+original 4-argument solve_function so the M0 stand path (mpc.py) is unchanged.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -7,9 +17,10 @@ import casadi as ca
 from ..robot.config import MPCConfig
 from ..robot.model import RobotModel, nominal_x
 from .dynamics import WBDynamics
+from .spline import get_spline_vel_z
 
 
-class StandOCP:
+class WalkOCP:
     def __init__(self, cfg: MPCConfig, rm: RobotModel, uniform_width: bool = False):
         self.cfg = cfg
         self.rm = rm
@@ -23,6 +34,11 @@ class StandOCP:
         self.ndx = 2 * self.nv
         self.f_idx, self.tau_idx = self.na, self.na + self.nf
         self.tau_max = rm.tau_max
+        # foot/corner topology (corners 0-3 = foot 0 Left, 4-7 = foot 1 Right)
+        self.corner_ids = rm.corner_frame_ids               # 8, first 4 Left, last 4 Right
+        self.foot_center_ids = rm.foot_center_frame_ids      # 2 (Left, Right)
+        self.n_feet = cfg.n_feet
+        self.swing_period = cfg.switching_times[1]            # 0.6 s (do NOT add a config field)
         ratio = cfg.dt_max / cfg.dt_min
         gamma = ratio ** (1.0 / (self.nodes - 1))
         self.dts = [cfg.dt_min * gamma ** i for i in range(self.nodes)]
@@ -35,6 +51,10 @@ class StandOCP:
     def _has_tau(self, i):
         return self.uniform_width or (i < self.tau_nodes)
 
+    @staticmethod
+    def _corner_foot(c):       # corner index -> foot index (0 Left:0-3, 1 Right:4-7)
+        return 0 if c < 4 else 1
+
     def _build(self):
         opti = self.opti
         self.DX, self.U = [], []
@@ -46,6 +66,17 @@ class StandOCP:
         self.x_init = opti.parameter(self.nx)
         self.Q_diag = opti.parameter(self.ndx)
         self.R_diag = opti.parameter(self.na + self.nf + self.nj)
+
+        # per-tick schedules + commands (passed as solver_fn arguments)
+        self.contact_sched = opti.parameter(self.n_feet, self.nodes)
+        self.swing_sched = opti.parameter(self.n_feet, self.nodes)
+        self.base_vx = opti.parameter(1)
+        self.footstep_tgt = opti.parameter(2 * self.n_feet, self.nodes)
+        # defaults => WalkOCP defaults to an all-stance problem (keeps opti.value(p) valid)
+        opti.set_value(self.contact_sched, np.ones((self.n_feet, self.nodes)))
+        opti.set_value(self.swing_sched, np.zeros((self.n_feet, self.nodes)))
+        opti.set_value(self.base_vx, 0.0)
+        opti.set_value(self.footstep_tgt, np.zeros((2 * self.n_feet, self.nodes)))
 
         x_des = ca.DM(nominal_x(self.cfg, self.rm.model))  # nominal stand: base@0.6734 upright, nominal joints, zero vel
         self.dx_des = self.dyn.state_difference()(self.x_init, x_des)
@@ -79,7 +110,8 @@ class StandOCP:
         opti = self.opti
         opti.subject_to(self.DX[0] == np.zeros(self.ndx))
         rnea = self.dyn.rnea_dynamics()
-        velfn = {fid: self.dyn.frame_velocity(fid) for fid in self.dyn.ee_frames}
+        corner_vel = {fid: self.dyn.frame_velocity(fid) for fid in self.corner_ids}
+        center_vel = {fid: self.dyn.frame_velocity(fid) for fid in self.foot_center_ids}
         for i in range(self.nodes):
             dq, dv = self.DX[i][:self.nv], self.DX[i][self.nv:]
             dq_n, dv_n = self.DX[i + 1][:self.nv], self.DX[i + 1][self.nv:]
@@ -92,14 +124,24 @@ class StandOCP:
                 tau_j = self._tau(i)
                 opti.subject_to(tau_rnea[6:] == tau_j)
                 opti.subject_to(opti.bounded(-self.tau_max, tau_j, self.tau_max))
-            for c in range(self.cfg.n_corners):                    # (4) friction cone
-                fe = forces[c*3:(c+1)*3]
-                opti.subject_to(fe[2] >= 0)
-                opti.subject_to(self.mu**2 * fe[2]**2 >= fe[0]**2 + fe[1]**2)
+            for c in range(self.cfg.n_corners):                    # (4) gated friction / swing zero-force
+                fe = forces[c * 3:(c + 1) * 3]
+                ic = self.contact_sched[self._corner_foot(c), i]
+                opti.subject_to(ic * fe[2] >= 0)
+                opti.subject_to(ic * self.mu**2 * fe[2]**2 >= ic * (fe[0]**2 + fe[1]**2))
+                opti.subject_to((1 - ic) * fe == np.zeros(3))
             if i == 0:
-                continue
-            for fid in self.dyn.ee_frames:                         # (5) zero contact velocity
-                opti.subject_to(velfn[fid](q, v)[:3] == np.zeros(3))
+                continue                                            # (5) node-0: NO velocity constraints
+            for c, fid in enumerate(self.corner_ids):               # stance: gated corner velocity
+                ic = self.contact_sched[self._corner_foot(c), i]
+                opti.subject_to(ic * corner_vel[fid](q, v)[:3] == np.zeros(3))
+            for f, fid in enumerate(self.foot_center_ids):          # swing: gated foot-center z-velocity
+                ic = self.contact_sched[f, i]
+                vz = center_vel[fid](q, v)[2]
+                vz_ref = get_spline_vel_z(self.swing_sched[f, i], self.swing_period,
+                                          self.cfg.swing_height, self.cfg.v_liftoff,
+                                          self.cfg.v_touchdown)
+                opti.subject_to((1 - ic) * (vz - vz_ref) == 0)
 
     def _objective(self):
         Q, R = ca.diag(self.Q_diag), ca.diag(self.R_diag)
@@ -111,7 +153,21 @@ class StandOCP:
             e_dx = self.DX[i] - self.dx_des
             obj += e_dx.T @ Q @ e_dx + (u - self.u_des_full).T @ R @ (u - self.u_des_full)
         e_dx = self.DX[self.nodes] - self.dx_des
-        return obj + e_dx.T @ Q @ e_dx
+        obj = obj + e_dx.T @ Q @ e_dx
+        # base forward-velocity tracking: pin base local x-velocity (v[0]) to base_vx
+        w_bvx = 200.0
+        for i in range(self.nodes):
+            vx = self._v(i)[0]
+            obj = obj + w_bvx * (vx - self.base_vx)**2
+        # Raibert footstep (soft): swing foot-center xy -> target, only where swinging
+        getpos = {fid: self.dyn.frame_position(fid) for fid in self.foot_center_ids}
+        for i in range(self.nodes):
+            for f, fid in enumerate(self.foot_center_ids):
+                sw = self.swing_sched[f, i]
+                pxy = getpos[fid](self._q(i))[:2]
+                tgt = self.footstep_tgt[2 * f:2 * f + 2, i]
+                obj = obj + self.cfg.footstep_weight * sw * ca.sumsqr(pxy - tgt)
+        return obj
 
     # --- API ---
     def set_weights(self):
@@ -120,6 +176,16 @@ class StandOCP:
 
     def set_x_init(self, x71):
         self.opti.set_value(self.x_init, np.asarray(x71, dtype=np.float64))
+
+    def set_schedules(self, contact, swing):
+        self.opti.set_value(self.contact_sched, np.asarray(contact, dtype=np.float64))
+        self.opti.set_value(self.swing_sched, np.asarray(swing, dtype=np.float64))
+
+    def set_base_vx(self, vx):
+        self.opti.set_value(self.base_vx, float(vx))
+
+    def set_footstep_targets(self, targets):       # (2*n_feet, N)
+        self.opti.set_value(self.footstep_tgt, np.asarray(targets, dtype=np.float64))
 
     def x_initial(self):
         return self.opti.value(self.opti.x, self.opti.initial())
@@ -134,7 +200,10 @@ class StandOCP:
     def solve_function(self, max_iter):
         self.opti.solver("fatrop", self._fatrop_opts(max_iter))
         return self.opti.to_function(
-            "solver_fn", [self.x_init, self.Q_diag, self.R_diag, self.opti.x], [self.opti.x])
+            "solver_fn",
+            [self.x_init, self.Q_diag, self.R_diag, self.contact_sched, self.swing_sched,
+             self.base_vx, self.footstep_tgt, self.opti.x],
+            [self.opti.x])
 
     def g_data(self):
         return ca.Function("g_data", [self.opti.x, self.opti.p],
@@ -162,3 +231,21 @@ class StandOCP:
             out["forces_sol"].append(u[self.f_idx:self.tau_idx])
             out["tau_sol"].append(u[self.tau_idx:] if self._has_tau(i) else np.zeros(self.nj))
         return out
+
+
+class StandOCP(WalkOCP):
+    """M0 stand: all-stance schedules baked in; original 4-arg solve_function preserved
+    so the M0 stand path (wb/mpc.py, sim/stand.py) is unchanged."""
+
+    def __init__(self, cfg: MPCConfig, rm: RobotModel, uniform_width: bool = False):
+        super().__init__(cfg, rm, uniform_width=uniform_width)
+        self.set_schedules(np.ones((self.n_feet, self.nodes)),
+                           np.zeros((self.n_feet, self.nodes)))
+        self.set_base_vx(0.0)
+        self.set_footstep_targets(np.zeros((2 * self.n_feet, self.nodes)))
+
+    def solve_function(self, max_iter):
+        # all-stance schedules / zero commands are baked via set_value (not args).
+        self.opti.solver("fatrop", self._fatrop_opts(max_iter))
+        return self.opti.to_function(
+            "solver_fn", [self.x_init, self.Q_diag, self.R_diag, self.opti.x], [self.opti.x])

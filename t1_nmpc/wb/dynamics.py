@@ -50,3 +50,9 @@ class WBDynamics:
         cpin.forwardKinematics(self.cmodel, self.cdata, q, v)
         vel = cpin.getFrameVelocity(self.cmodel, self.cdata, fid, pin.LOCAL_WORLD_ALIGNED).vector
         return ca.Function(f"vel_{fid}", [q, v], [vel])
+
+    def frame_position(self, fid: int) -> ca.Function:
+        q = ca.SX.sym("q", self.nq)
+        cpin.framesForwardKinematics(self.cmodel, self.cdata, q)
+        pos = self.cdata.oMf[fid].translation
+        return ca.Function(f"pos_{fid}", [q], [pos])
