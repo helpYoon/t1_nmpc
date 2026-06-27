@@ -14,6 +14,7 @@ class RobotModel:
     model: pin.Model
     data: pin.Data
     corner_frame_ids: tuple[int, ...]
+    foot_center_frame_ids: tuple[int, ...]
     mass: float
     trunk_frame_id: int
     tau_max: np.ndarray   # (29,)
@@ -37,11 +38,22 @@ def load_model(cfg: MPCConfig) -> RobotModel:
                 frame = pin.Frame(name, parent_joint, fid, placement, pin.FrameType.OP_FRAME)
                 corner_ids.append(model.addFrame(frame))
 
+    center_ids = []
+    cx = (cfg.corner_x[0] + cfg.corner_x[1]) / 2.0
+    for ankle in ANKLE_ROLL_FRAMES:
+        fid = model.getFrameId(ankle)
+        parent_joint = model.frames[fid].parentJoint
+        parent_placement = model.frames[fid].placement
+        t = parent_placement.act(np.array([cx, 0.0, cfg.corner_z], dtype=np.float64))
+        frame = pin.Frame(f"{ankle}_center", parent_joint, fid, pin.SE3(np.eye(3), t),
+                          pin.FrameType.OP_FRAME)
+        center_ids.append(model.addFrame(frame))
+
     data = model.createData()
     mass = float(pin.computeTotalMass(model, data))
     trunk_fid = model.getFrameId("Trunk")
     tau_max = np.asarray(model.effortLimit[6:], dtype=np.float64).copy()
-    return RobotModel(model, data, tuple(corner_ids), mass, trunk_fid, tau_max)
+    return RobotModel(model, data, tuple(corner_ids), tuple(center_ids), mass, trunk_fid, tau_max)
 
 
 def nominal_q(cfg: MPCConfig, model: pin.Model) -> np.ndarray:

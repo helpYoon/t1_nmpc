@@ -21,3 +21,16 @@ def test_model_build_corners_mass():
     # corners share 2 parent joints, 4 each
     parents = [rm.model.frames[c].parentJoint for c in rm.corner_frame_ids]
     assert len(set(parents)) == 2 and all(parents.count(p) == 4 for p in set(parents))
+
+
+def test_foot_center_frames():
+    import numpy as np
+    from t1_nmpc.robot.config import make_config
+    from t1_nmpc.robot.model import load_model
+    rm = load_model(make_config())
+    assert len(rm.foot_center_frame_ids) == 2
+    assert len(rm.corner_frame_ids) == 8          # corners unchanged
+    cx = (make_config().corner_x[0] + make_config().corner_x[1]) / 2.0
+    for fid in rm.foot_center_frame_ids:
+        t = rm.model.frames[fid].placement.translation
+        np.testing.assert_allclose([t[0], t[1], t[2]], [cx, 0.0, make_config().corner_z], atol=1e-9)
