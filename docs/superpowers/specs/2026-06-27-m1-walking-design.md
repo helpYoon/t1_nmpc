@@ -26,7 +26,8 @@ This is the milestone the prior aligator port never closed — it "advanced but 
 | Decision | Choice |
 |---|---|
 | Target | **Stable forward walk** (full M1), not just "first steps" |
-| Balance strategy | **Minimal refs, lean on the converged OCP** — no explicit CoM-sway reference (yet) |
+| Discretization | **Match t1_controller:** `dt = 0.035 s` **uniform** (drops wb-mpc's geometric grid) · walk **N = 31** → horizon **≈ 1.085 s ≈ 1.1 s** |
+| Balance strategy | **Minimal refs, lean on the converged OCP** — no explicit CoM-sway reference (yet); the ~1.1 s horizon now spans a full step+ so the OCP can anticipate single support |
 | Explicit references added | contact schedule · swing-foot z-trajectory · forward base-velocity command · swing-foot **(x,y) landing target** |
 | Build order | **Incremental, spike first** — de-risk Fatrop-under-changing-contact, then stand→step→walk |
 | Escalation if it drifts | add the explicit CoM-sway + footstep-cost reference (kept as the clean next iteration) |
@@ -53,12 +54,15 @@ expanded to the 8 corner flags). Returns, for a horizon of `nodes` with timestep
 - `swing_schedule (8, nodes)` ∈ [0,1] (swing phase; 0 when in contact)
 - `n_contacts` (stance-corner count, for the gravity-comp force reference)
 
-Proposed defaults (tunable in the spec/plan, refined empirically): `cycle_period ≈ 0.9 s`,
-swing ≈ 0.35 s/step, double-support ≈ 0.10 s, `swing_height ≈ 0.06 m`,
-`lift_off_velocity ≈ 0.1 m/s`, `touch_down_velocity ≈ −0.2 m/s`.
+**Timing matched to t1_controller's `walk` gait** (`humanoid_common_mpc/.../gait.info`): mode
+pattern `L-stance(0.6 s) → double(0.1 s) → R-stance(0.6 s) → double(0.1 s)` — single-support
+**0.6 s/step**, double-support **0.1 s**, **`cycle_period = 1.4 s`**. Swing-z params (tunable):
+`swing_height ≈ 0.06 m`, `lift_off_velocity ≈ 0.1 m/s`, `touch_down_velocity ≈ −0.2 m/s`.
 
-**Invariant (hard):** the gait cycle must stay **longer than the MPC horizon**
-(`0.9 s > ~0.45 s`), so the horizon never wraps a full period.
+**Invariant (hard):** the gait cycle must stay **longer than the MPC horizon** — here
+`1.4 s > 1.085 s` ✓. The horizon spans ~0.78 of a cycle (a full single-support step plus the
+following double-support and into the next), giving the OCP the anticipation the prior 0.45 s
+horizon lacked.
 
 `StandGait` (all-corners-in-contact) is **kept** for the stand path.
 
@@ -80,6 +84,13 @@ Per-node, per-corner constraints become schedule-aware (`in_contact = contact_sc
 The **stand is the all-ones special case** of this schedule, so this *replaces* `StandOCP` with one
 parameterized OCP. The existing M0 stand tests guard the regression (stand = schedule of all 1s).
 RNEA, the adaptive input width, the gap-closing/staircase ordering, and `_init_guess` are unchanged.
+
+**Discretization (changed, §2):** the time grid switches from wb-mpc's geometric `dt` to
+t1_controller's **uniform `dt = 0.035 s`** (`self.dts = [dt] * N`; drop `dt_min/dt_max`). The
+**walk uses `N = 31`** (horizon ≈ 1.085 s); the **stand keeps `N = 14`** (horizon ≈ 0.49 s, ~unchanged
+from its current 0.45 s) and is **re-validated** under the uniform `dt`. Solve cost scales ~linearly
+in `N`, so the walk OCP solve is ~2× the stand's (~80–100 ms vs ~40 ms) — acceptable for sim testing
+(the runner is not real-time-gated; it just plays slower than wall-clock), real-time deferred (§12).
 
 ## 6. Swing trajectory + foot placement (the only explicit refs)
 
@@ -130,8 +141,11 @@ must tolerate these across single↔double-support transitions, on T1's adaptive
 relies on exactly this for its quadruped trot, but **our T1 OCP must be re-validated** — just like the
 M0 stand was spiked before its plan.
 
-**Spike (before the plan):** build the parameterized contact-schedule OCP with a real biped walking
-schedule and confirm it converges (low CV) across a few receding ticks spanning a contact switch.
+**Spike (before the plan):** build the parameterized contact-schedule OCP at the **walk
+discretization (`N = 31`, `dt = 0.035`, horizon ≈ 1.085 s)** with a real biped walking schedule
+(`cycle 1.4 s`), and confirm it (a) **converges** (low CV) across a few receding ticks spanning a
+contact switch, and (b) **reports its per-solve time** at this larger horizon (so the plan's
+solve-time expectations and the sim runner's pacing are grounded, not guessed).
 **Fallbacks if it doesn't:** (a) a tiny normal-force floor / bound relaxation on swing corners;
 (b) drop the trivial rows by emitting only the active-phase constraints per node at the cost of a
 small set of per-phase compiled problems. The plan picks the fallback only if the spike needs it.
@@ -142,7 +156,8 @@ Closed-loop MuJoCo walk, watchable via `--view`:
 - advances forward **≥ ~0.5 m over ≥ 5 s without falling**
 - feet **alternate** with confirmed lift (swing-foot z clears the ground)
 - **lateral drift bounded** (< ~0.1 m) and trunk upright
-- measured GRF sane; solve **p90 < the control period budget** (informational)
+- measured GRF sane; solve **p90 reported** (informational — expect ~80–100 ms at `N=31`, over the
+  real-time control period; that's a deferred deployment concern, §12, not a sim-walk blocker)
 
 Unit tests: `WalkGait` schedule shapes/timing; the swing spline; the footstep target; and the
 parameterized OCP **converges under a walking schedule** (CV low). The **M0 stand tests must still
@@ -162,7 +177,9 @@ codegen for real-time; hardware.
 - Biped balance via the **converged OCP's support-polygon constraints**, no explicit CoM/ZMP
   reference (a deliberate minimal-reference bet, unlike OCS2/t1_controller's explicit CoM trajectory).
 - Foot placement via a **Raibert heuristic**, not an optimized footstep planner.
-- Gait timing / swing / stance-width values are **re-dimensioned for T1 and not yet hardware-cited**.
+- The **dt (0.035), horizon (1.1 s), and gait timing (cycle 1.4 s, SS 0.6 s, DS 0.1 s) now match
+  t1_controller** (`task.info` + `gait.info`). Only the swing-z profile and the lateral stance-width
+  remain re-dimensioned for T1 and not yet hardware-cited.
 
 ## 14. Incremental build (each step verified before the next)
 
