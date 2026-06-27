@@ -6,7 +6,7 @@ from typing import Protocol
 
 import numpy as np
 
-from ..config import JointCommand
+from ..robot.config import JointCommand
 
 
 class Transport(Protocol):

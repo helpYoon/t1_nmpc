@@ -1,8 +1,8 @@
 # tests/test_sysid_friction.py
 import numpy as np
 import mujoco
-from t1_nmpc.config import make_config
-from t1_nmpc.model import load_model, T1_URDF_PATH
+from t1_nmpc.robot.config import make_config
+from t1_nmpc.robot.model import load_model, T1_URDF_PATH
 from sim.mujoco_runtime import MujocoRuntime
 
 

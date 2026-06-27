@@ -2,8 +2,8 @@ import numpy as np
 import pinocchio as pin
 import pytest
 
-from t1_nmpc.config import make_config
-from t1_nmpc.model import (
+from t1_nmpc.robot.config import make_config
+from t1_nmpc.robot.model import (
     load_model,
     RobotModel,
     EXPECTED_JOINT_NAMES,
@@ -51,7 +51,7 @@ def test_joint_order_matches_A5(rm):
 
 def test_joint_order_mismatch_raises(monkeypatch):
     # Corrupt the expected-order tuple in the module and confirm load_model raises.
-    import t1_nmpc.model as model_mod
+    import t1_nmpc.robot.model as model_mod
 
     bad = ("WRONG_FIRST_JOINT",) + EXPECTED_JOINT_NAMES[1:]
     monkeypatch.setattr(model_mod, "EXPECTED_JOINT_NAMES", bad)

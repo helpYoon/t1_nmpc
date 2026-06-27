@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..config import JointCommand
+from ..robot.config import JointCommand
 from ..wb.config_wb import WBConfig
 
 # SDK B1JointIndex names in SDK order for the 27 MPC joints (head excluded). VERIFY ON-ROBOT.

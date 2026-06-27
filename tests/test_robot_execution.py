@@ -1,7 +1,7 @@
 import numpy as np
 
-from t1_nmpc.config import load_config, JointCommand
-from t1_nmpc.execution import pd_torque
+from t1_nmpc.robot.config import load_config, JointCommand
+from t1_nmpc.robot.execution import pd_torque
 
 
 def test_pd_torque_law():

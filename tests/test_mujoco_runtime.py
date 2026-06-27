@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from t1_nmpc.config import load_config
-from t1_nmpc.model import load_model
+from t1_nmpc.robot.config import load_config
+from t1_nmpc.robot.model import load_model
 from sim.mujoco_runtime import (
     MujocoRuntime,
     T1_MJCF_PATH,

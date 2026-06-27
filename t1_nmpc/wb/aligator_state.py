@@ -30,7 +30,7 @@ from __future__ import annotations
 import numpy as np
 
 from .aligator_exec import extract_tau_ff
-from ..config import JointCommand
+from ..robot.config import JointCommand
 
 # ---------------------------------------------------------------------------
 # Fixed index slices (§A.5 order, verified against wb_state.py:18 / _pin_q_v)

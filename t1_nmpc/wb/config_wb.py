@@ -19,7 +19,7 @@ from typing import Tuple
 import numpy as np
 import pinocchio as pin
 
-from t1_nmpc.model import EXPECTED_JOINT_NAMES, T1_URDF_PATH
+from t1_nmpc.robot.model import EXPECTED_JOINT_NAMES, T1_URDF_PATH
 
 # 27 MPC joints = canonical 29-joint order minus the two head joints.
 MPC_JOINT_NAMES: Tuple[str, ...] = EXPECTED_JOINT_NAMES[2:]
