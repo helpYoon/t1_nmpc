@@ -78,11 +78,11 @@ def _R_diag() -> np.ndarray:
 
 @dataclass(frozen=True)
 class MPCConfig:
-    # dimensions / horizon
-    nodes: int = 14
+    # dimensions / horizon   (uniform grid: dt_min==dt_max -> gamma=1)
+    nodes: int = 31
     tau_nodes: int = 3
-    dt_min: float = 0.02
-    dt_max: float = 0.06
+    dt_min: float = 0.035
+    dt_max: float = 0.035
     n_joints: int = 29
     nq: int = 36
     nv: int = 35
@@ -104,6 +104,18 @@ class MPCConfig:
 
     # friction
     friction_mu: float = 0.4
+
+    # gait (walk; t1_controller gait.info)
+    n_feet: int = 2
+    gait_cycle: float = 1.4
+    switching_times: Tuple[float, ...] = (0.0, 0.6, 0.7, 1.3, 1.4)
+    swing_height: float = 0.08
+    v_liftoff: float = 0.05
+    v_touchdown: float = -0.05
+    # forward command + Raibert footstep
+    base_vx_des: float = 0.0
+    footstep_k: float = 0.1
+    footstep_weight: float = 50.0
 
     # weights
     Q_diag: np.ndarray = field(default_factory=_Q_diag)
