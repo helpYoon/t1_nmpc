@@ -100,8 +100,12 @@ def freeflyer_command(am, x_meas: np.ndarray, res, wb_cfg) -> JointCommand:
     u0 = np.asarray(res.us[0], dtype=np.float64)
     tau_ff, wl, wr = extract_tau_ff(am, x_meas, u0)
 
-    q_joints = np.ascontiguousarray(x_meas[_FF_Q_JOINTS], dtype=np.float64)  # (27,)
-    v_joints = np.ascontiguousarray(x_meas[_FF_V_JOINTS], dtype=np.float64)  # (27,)
+    # PD reference = the PLANNED next-node joint state (not measured), so kp*(q_des - q_meas) actively
+    # pulls the joints toward the planned motion (e.g. the lifting swing leg). q_des=measured gave zero
+    # PD assist and left tau_ff alone unable to realize the planned foot lift.
+    x_des = np.asarray(res.xs[1] if len(res.xs) > 1 else res.xs[0], dtype=np.float64)
+    q_joints = np.ascontiguousarray(x_des[_FF_Q_JOINTS], dtype=np.float64)  # (27,)
+    v_joints = np.ascontiguousarray(x_des[_FF_V_JOINTS], dtype=np.float64)  # (27,)
 
     return JointCommand(
         q_des=q_joints,

@@ -7,6 +7,7 @@ import pinocchio as pin
 import aligator
 from aligator import dynamics, constraints
 from .aligator_model import make_ode
+from .aligator_swingz import SwingZBaumgarte
 
 
 def _foot_half_extents(wb_cfg):
@@ -17,7 +18,10 @@ def _foot_half_extents(wb_cfg):
 def _weights(am, al_cfg, contact_flags, FS=6):
     nv = am.nv
     ndx = am.ndx
-    wx = np.r_[np.full(6, al_cfg.w_base_pose), np.full(nv - 6, al_cfg.w_joint_pos), np.full(nv, al_cfg.w_vel)]
+    # base tangent = [lin x,y,z | ang x,y,z]: horizontal (x,y) low so the CoM can sway for emergent
+    # lateral balance; height (z) + orientation firm.
+    wx = np.r_[al_cfg.w_base_xy, al_cfg.w_base_xy, al_cfg.w_base_z, np.full(3, al_cfg.w_base_ori),
+               np.full(nv - 6, al_cfg.w_joint_pos), np.full(nv, al_cfg.w_vel)]
     nu = 2 * FS + (nv - 6)
     wu = np.empty(nu)
     wu[:2 * FS] = al_cfg.w_force_reg
@@ -40,13 +44,30 @@ def make_stage(am, wb_cfg, al_cfg, contact_flags, x_ref, swing_refs, ode, FS=6):
     for k, on in enumerate(contact_flags):
         if on:
             u_ref[k * FS + 2] = mg / nst             # weight-supporting reference
+    # lateral CoM transfer: in single support, reference the base-y over the stance foot so the CoM
+    # shifts onto the support (the precondition that makes the swing-foot lift feasible). Emergent in a
+    # full-QP MPC; our few-iteration ProxDDP needs it referenced explicitly.
+    x_ref_s = np.array(x_ref, float)
+    if sum(contact_flags) == 1:
+        ks = 0 if contact_flags[0] else 1
+        _rd = am.model.createData(); pin.framesForwardKinematics(am.model, _rd, np.asarray(x_ref[:am.nq], float))
+        x_ref_s[1] = float(_rd.oMf[int(am.foot_ids[ks])].translation[1])
     cost = aligator.CostStack(am.space, nu)
-    cost.addCost("xreg", aligator.QuadraticStateCost(am.space, nu, x_ref, np.diag(wx)))
+    cost.addCost("xreg", aligator.QuadraticStateCost(am.space, nu, x_ref_s, np.diag(wx)))
     cost.addCost("ureg", aligator.QuadraticControlCost(am.space, u_ref, np.diag(wu)))
+    swing_z_fns = []  # accel-level Baumgarte residuals, added after the stage exists
     for foot_idx, p_ref in swing_refs:
-        ft = aligator.FrameTranslationResidual(ndx, nu, am.model, np.asarray(p_ref, float), int(am.foot_ids[foot_idx]))
-        cost.addCost(f"swz{foot_idx}", aligator.QuadraticResidualCost(am.space, ft, np.diag([0., 0., al_cfg.w_swing_z])))
+        if al_cfg.hard_swing_z:
+            # accel-level Baumgarte (input-coupled -> AL-enforceable; a position constraint is not).
+            sz = SwingZBaumgarte(am, am.foot_ids[foot_idx], FS)
+            sz.z_ref = float(p_ref[2])   # gait swing height; vz_ref=az_ref=0 -> Baumgarte damps toward it
+            swing_z_fns.append(sz)
+        else:
+            ft = aligator.FrameTranslationResidual(ndx, nu, am.model, np.asarray(p_ref, float), int(am.foot_ids[foot_idx]))
+            cost.addCost(f"swz{foot_idx}", aligator.QuadraticResidualCost(am.space, ft, np.diag([0., 0., al_cfg.w_swing_z])))
     st = aligator.StageModel(cost, dynamics.IntegratorSemiImplEuler(ode, float(wb_cfg.dt)))
+    for fn in swing_z_fns:
+        st.addConstraint(fn, constraints.EqualityConstraintSet())       # HARD accel-level swing-z
     for k, on in enumerate(contact_flags):
         if not on:
             continue

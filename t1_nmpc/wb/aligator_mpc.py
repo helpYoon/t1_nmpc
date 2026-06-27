@@ -82,10 +82,16 @@ class AligatorMPC:
 
     def _configure(self, problem):
         s = aligator.SolverProxDDP(self.al.tol, self.al.mu_init, max_iters=self.al.max_iters, verbose=aligator.QUIET)
-        try: s.linear_solver_choice = aligator.LQ_SOLVER_PARALLEL
+        # The walk path (gait set) adds the custom python SwingZBaumgarte residual, which the C++ parallel
+        # LQ solver cannot call across threads (GIL) -> force SERIAL when walking. The stand path (gait=None,
+        # all-C++ residuals) keeps the parallel Riccati. (RT TODO: a C++ swing-z residual to regain parallel.)
+        parallel = self.al.num_threads >= 2 and self.gait is None
+        try:
+            s.linear_solver_choice = aligator.LQ_SOLVER_PARALLEL if parallel else aligator.LQ_SOLVER_SERIAL
         except Exception: pass
-        try: s.setNumThreads(self.al.num_threads)
-        except Exception: pass
+        if parallel:
+            try: s.setNumThreads(self.al.num_threads)
+            except Exception: pass
         for attr, val in [("max_al_iters", self.al.max_al_iters),
                           ("rollout_type", getattr(aligator, "ROLLOUT_LINEAR", None)),
                           ("sa_strategy", getattr(aligator, "SA_FILTER", None))]:
