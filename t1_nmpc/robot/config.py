@@ -136,6 +136,7 @@ class MPCConfig:
     time_scale: float = 5.0
     w_hand: float = 400.0
     grasp_halfwidth: float = 0.04   # plan-phase seconds; node within this of an event -> hard hand
+    track_warm_iters: int = 5       # RTI per-tick Fatrop cap (validated: completes full motion; cap=3 falls)
 
     # weights
     Q_diag: np.ndarray = field(default_factory=_Q_diag)
@@ -172,7 +173,7 @@ def make_config(**overrides) -> MPCConfig:
 
 
 def make_track_config(**overrides) -> MPCConfig:
-    base = dict(nodes=10, dt_min=0.04, dt_max=0.04, Q_diag=_track_Q_diag())
+    base = dict(nodes=8, dt_min=0.04, dt_max=0.04, Q_diag=_track_Q_diag())
     base.update(overrides)
     return make_config(**base)
 
