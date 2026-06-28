@@ -111,3 +111,27 @@ wb-mpc-locoman applied to T1; `t1_controller` is a data source only.
 | **W4** | Joints in OCP | OCS2 fixes the 2 head joints (27-DOF) | **All 29 joints retained** in the OCP (MuJoCo parity); head joints are decision variables | Deliberate — full parity with MuJoCo `nu=29`; head can be cheaply regulated by weight tuning |
 | **W5** | Q/R weights | Diagonal weights in `task.info`, term-by-term verified for the acados port | **Re-dimensioned and retuned for T1's 29-joint FreeFlyer tree** (arm/waist/leg/head weighting); **NOT traced to t1_controller** | Explicit divergence — stand weights are plausible but uncited; must be re-grounded before any walking milestone |
 | **W6** | Joint pos/vel limits | OCS2 soft two-sided polynomial barrier (μ1200/δ0.1) on 27 joints | **Deliberately omitted at stand** (box bounds commented out); deferred to walking | Deliberate deferral — limits are non-critical for stand; must be added before walking/hardware |
+
+---
+
+## Pickup trajectory tracking (2026-06-28)
+
+Tracking `data/motion_plan.pkl` on the whole-body RNEA OCP. Reference mapping follows t1_kd_mpc; the
+following diverge deliberately:
+
+1. **Hard hand-position constraint at grasp keyframes** — t1_kd_mpc keeps hands always-soft (top
+   weight 400). We harden at the 4 grasp/release instants (slack trick, `(1-gate)*s`) for grasp
+   accuracy. Risk: conflict with hard planted-feet + RNEA → infeasibility; mitigated by soft-everywhere
+   default and a narrow `grasp_halfwidth`.
+2. **Base height tracked from `trunk_height`** — t1_kd_mpc ignores plan base position (its reduced model
+   pins the base); our full-order free base uses it as the crouch reference (validated: planted flat
+   feet reachable over the whole motion, max foot error < 0.03 mm).
+3. **Legs solved by the OCP** (not broadcast) against hard planted feet, with leg joint-position limits
+   (anti-hyperextension) + a low-weight leg-pitch seed in the reference. Broadcasting the plan's leg
+   channels directly is geometrically inconsistent with planted feet (feet fly up +46..83 cm).
+4. **Interpolated reference sampling** (linear + slerp) vs t1_kd_mpc nearest-frame.
+5. **No payload model** (object mass absent from the plan) — same as t1_kd_mpc; future work.
+6. **Horizon N=10/8 + RTI per-tick iteration cap (`track_warm_iters=5`)** — not 31 as in the stand
+   OCP; validated real-time via an RTI iteration cap of 5: cap=3 falls at the left-release transition
+   (under-converges there), cap=5 (`track_warm_iters`) completes the full motion. JIT/C-codegen ruled
+   out (graph too large to compile).
