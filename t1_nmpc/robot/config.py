@@ -76,6 +76,21 @@ def _R_diag() -> np.ndarray:
     ])
 
 
+def _track_Q_diag() -> np.ndarray:
+    # ndx=70 = [base(6)=x,y,z,wx,wy,wz | joints(29) | base_vel(6) | joint_vel(29)]
+    base_pos = np.array([50, 50, 2000, 3000, 3000, 50], dtype=np.float64)   # track z + lean (wx,wy); xy/yaw light
+    joint_pos = np.concatenate([
+        [1, 1],                       # head (nominal, light)
+        [200] * 7, [200] * 7,         # L/R arm (tracked)
+        [200],                        # waist (tracked, = -trunk_yaw)
+        [5, 1, 1, 5, 5, 1],           # L leg: hipP,hipR,hipY,knee,ankP,ankR  (pitch=seed 5; redundant=1)
+        [5, 1, 1, 5, 5, 1],           # R leg
+    ])
+    base_vel = np.array([50, 50, 50, 50, 50, 50], dtype=np.float64)
+    joint_vel = np.concatenate([[1, 1], [5] * 7, [5] * 7, [5], [2] * 6, [2] * 6])
+    return np.concatenate([base_pos, joint_pos, base_vel, joint_vel])
+
+
 @dataclass(frozen=True)
 class MPCConfig:
     # dimensions / horizon   (uniform grid: dt_min==dt_max -> gamma=1)
@@ -117,6 +132,11 @@ class MPCConfig:
     footstep_k: float = 0.1
     footstep_weight: float = 50.0
 
+    # trajectory tracking (pickup)
+    time_scale: float = 5.0
+    w_hand: float = 400.0
+    grasp_halfwidth: float = 0.04   # plan-phase seconds; node within this of an event -> hard hand
+
     # weights
     Q_diag: np.ndarray = field(default_factory=_Q_diag)
     R_diag: np.ndarray = field(default_factory=_R_diag)
@@ -149,6 +169,12 @@ def make_config(**overrides) -> MPCConfig:
     assert cfg.R_diag.shape == (cfg.na + cfg.nf + cfg.n_joints,)
     assert cfg.kp.shape == (29,) and cfg.kd.shape == (29,)
     return cfg
+
+
+def make_track_config(**overrides) -> MPCConfig:
+    base = dict(nodes=10, dt_min=0.04, dt_max=0.04, Q_diag=_track_Q_diag())
+    base.update(overrides)
+    return make_config(**base)
 
 
 @dataclass

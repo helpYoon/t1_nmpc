@@ -18,6 +18,7 @@ class RobotModel:
     mass: float
     trunk_frame_id: int
     tau_max: np.ndarray   # (29,)
+    hand_frame_ids: tuple[int, ...] = ()   # (left_hand_link, right_hand_link)
 
 
 def load_model(cfg: MPCConfig) -> RobotModel:
@@ -53,7 +54,9 @@ def load_model(cfg: MPCConfig) -> RobotModel:
     mass = float(pin.computeTotalMass(model, data))
     trunk_fid = model.getFrameId("Trunk")
     tau_max = np.asarray(model.effortLimit[6:], dtype=np.float64).copy()
-    return RobotModel(model, data, tuple(corner_ids), tuple(center_ids), mass, trunk_fid, tau_max)
+    hand_ids = (model.getFrameId("left_hand_link"), model.getFrameId("right_hand_link"))
+    return RobotModel(model, data, tuple(corner_ids), tuple(center_ids), mass, trunk_fid,
+                      tau_max, hand_ids)
 
 
 def nominal_q(cfg: MPCConfig, model: pin.Model) -> np.ndarray:
