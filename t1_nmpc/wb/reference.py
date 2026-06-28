@@ -97,3 +97,46 @@ class MotionPlanReference:
                 if cur[h] != prev[h]:
                     self.events[h].append(seg_start_t[si])
             prev = cur
+
+    def _slerp(self, qa, qb, alpha):
+        ra, rb = Rsc.from_quat(qa), Rsc.from_quat(qb)
+        rel = (ra.inv() * rb).as_rotvec() * alpha
+        return (ra * Rsc.from_rotvec(rel)).as_quat()
+
+    def _interp(self, t_ref):
+        """Interpolated (q(36), hand(6)) at phase time t_ref (clamped to [0, duration])."""
+        tf = self.t_frame
+        t_ref = float(np.clip(t_ref, tf[0], tf[-1]))
+        i = int(np.searchsorted(tf, t_ref))
+        if i <= 0:
+            return self.q_frame[0].copy(), self.hand_frame[0].copy()
+        if i >= len(tf):
+            return self.q_frame[-1].copy(), self.hand_frame[-1].copy()
+        t0, t1 = tf[i - 1], tf[i]
+        a = 0.0 if t1 <= t0 else (t_ref - t0) / (t1 - t0)
+        qa, qb = self.q_frame[i - 1], self.q_frame[i]
+        q = np.empty(36)
+        q[0:3] = (1 - a) * qa[0:3] + a * qb[0:3]
+        q[3:7] = self._slerp(qa[3:7], qb[3:7], a)
+        q[7:] = (1 - a) * qa[7:] + a * qb[7:]
+        h = (1 - a) * self.hand_frame[i - 1] + a * self.hand_frame[i]
+        return q, h
+
+    def sample(self, t_wall: float, time_scale: float | None = None):
+        ts = self.cfg.time_scale if time_scale is None else float(time_scale)
+        N = self.cfg.nodes
+        dt = self.cfg.dt_min
+        q_nodes, hand_ref, gate = [], np.zeros((6, N + 1)), np.zeros((2, N + 1))
+        for i in range(N + 1):
+            t_ref = float(np.clip((t_wall + i * dt) / ts, 0.0, self.duration_phase))
+            q_i, h_i = self._interp(t_ref)
+            q_nodes.append(q_i); hand_ref[:, i] = h_i
+            for h in (0, 1):
+                if any(abs(t_ref - te) < self.grasp_hw for te in self.events[h]):
+                    gate[h, i] = 1.0
+        x_ref = np.zeros((71, N + 1))
+        for i in range(N + 1):
+            x_ref[:36, i] = q_nodes[i]
+            qa = q_nodes[i]; qb = q_nodes[min(i + 1, N)]
+            x_ref[36:, i] = pin.difference(self.model, qa, qb) / dt   # manifold vel (carries 1/time_scale)
+        return x_ref, hand_ref, gate
