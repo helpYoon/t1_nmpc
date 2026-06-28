@@ -26,15 +26,6 @@ def _tilt_from_quat_xyzw(qx, qy, qz, qw):
     return float(np.degrees(np.arccos(np.clip(R[2, 2], -1.0, 1.0))))
 
 
-def _measured_grf_z(m, d):
-    total, f6 = 0.0, np.zeros(6)
-    for i in range(d.ncon):
-        mujoco.mj_contactForce(m, d, i, f6)
-        frame = d.contact[i].frame.reshape(3, 3)
-        total += (frame.T @ f6[:3])[2]
-    return abs(total)
-
-
 def _hand_err_cm(rm, qpos_mj, mpc, t_wall):
     """L2 hand position error vs the (anchored) reference, cm, max over both hands."""
     from t1_nmpc.wb.state import mujoco_to_freeflyer
@@ -66,6 +57,7 @@ def run_pickup(cfg: MPCConfig, plan_path: str = "data/motion_plan.pkl",
     FALL_RELTILT = 20.0     # the motion legitimately leans to ~70deg; a FALL is measured tilt diverging
                             # from the REFERENCE tilt by > this (validated: tracking stays within ~2deg).
     t_start = time.perf_counter()
+    t_wall = 0.0
     for k in range(n_steps):
         t_wall = k * rt.physics_dt
         if k % rt.mpc_decim == 0:

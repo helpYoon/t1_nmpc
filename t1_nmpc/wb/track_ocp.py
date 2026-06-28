@@ -43,10 +43,6 @@ class PickupOCP:
         self.opti = ca.Opti()
         self._build()
 
-    @staticmethod
-    def _corner_foot(c):
-        return 0 if c < 4 else 1
-
     def _nu(self, i):
         return self.na + self.nf + self.ns + (self.nj if i < self.tau_nodes else 0)
 

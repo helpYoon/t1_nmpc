@@ -21,7 +21,7 @@ class TrackingMPC:
         self.ocp = PickupOCP(cfg, rm); self.ocp.set_weights()
         # TWO compiled solvers: reset converges fully; per-tick is RTI-capped (bounded worst case).
         # Validated 2026-06-28: cap=3 falls at the left-release transition (under-converges there);
-        # cap>=6 completes the full motion. cold/reset MUST converge (full iters) for a clean start.
+        # cap=5 (track_warm_iters) completes the full motion. cold/reset MUST converge (full iters) for a clean start.
         self._solve_cold = self.ocp.solve_function(cfg.fatrop_max_iter)
         self._solve_warm = self.ocp.solve_function(cfg.track_warm_iters)
         self._warm = None
