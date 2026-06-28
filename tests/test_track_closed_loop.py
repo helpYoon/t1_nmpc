@@ -1,3 +1,5 @@
+import pytest
+
 from t1_nmpc.robot.config import make_track_config
 from sim.pickup import run_pickup
 
@@ -11,3 +13,16 @@ def test_closed_loop_tracks_first_reach():
     assert res["max_reltilt_deg"] < 10.0               # tracks the reference lean (NOT absolute tilt)
     assert 0.80 < res["fz_ratio_p50"] < 1.20           # Σfz/mg ~ 1 (balanced)
     assert res["solve_p90_ms"] > 0.0
+    assert res["hand_err_grasp_max_cm"] < 5.0          # validated ~3.4 cm; 5.0 is a safe ceiling
+
+
+@pytest.mark.slow
+def test_full_motion_completes():
+    """Full bimanual pickup (~75 s wall) must COMPLETE without falling (reference-relative) — exercises
+    the release transitions that the short test never reaches (cap=3 falls there; cap=5 completes)."""
+    cfg = make_track_config(time_scale=5.0)
+    res = run_pickup(cfg)                        # default duration = full motion
+    assert res["completed"] is True
+    assert res["fell"] is False
+    assert res["max_reltilt_deg"] < 5.0         # tracks the reference lean through all phases
+    assert res["hand_err_grasp_max_cm"] < 5.0

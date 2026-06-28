@@ -6,3 +6,4 @@ import warnings
 def pytest_configure(config):
     # Add filter before any test collection/execution
     warnings.filterwarnings("ignore", message=".*already registered.*", category=RuntimeWarning)
+    config.addinivalue_line("markers", "slow: long-running closed-loop tests")
