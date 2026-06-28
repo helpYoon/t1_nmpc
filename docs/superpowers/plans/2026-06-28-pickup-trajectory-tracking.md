@@ -671,10 +671,9 @@ class PickupOCP:
     def _constraints(self):
         opti = self.opti
         opti.subject_to(self.DX[0] == np.zeros(self.ndx))
-        rnea = self.dyn.rnea_dynamics_gated()
+        rnea = self.dyn.rnea_dynamics()                      # ungated: all-stance -> every corner always applied
         center_vel = {fid: self.dyn.frame_velocity(fid) for fid in self.foot_center_ids}
         hand_pos = {fid: self.dyn.frame_position(fid) for fid in self.hand_ids}
-        contact_all = ca.DM.ones(self.n_corners)             # all-stance: every corner active
         for i in range(self.nodes):
             dq, dv = self.DX[i][:self.nv], self.DX[i][self.nv:]
             dq_n, dv_n = self.DX[i + 1][:self.nv], self.DX[i + 1][self.nv:]
@@ -682,7 +681,7 @@ class PickupOCP:
             # (1) gap-closing FIRST (forward Euler; slow quasi-static motion -> adequate)
             opti.subject_to(dq_n == dq + v * dt)
             opti.subject_to(dv_n == dv + a * dt)
-            tau_rnea = rnea(q, v, a, forces, contact_all)
+            tau_rnea = rnea(q, v, a, forces)
             # (2) base underactuation
             opti.subject_to(tau_rnea[:6] == np.zeros(6))
             # (3) torque equality (first tau_nodes)
